@@ -55,6 +55,7 @@ getTreeRelativeToRoot(git_repository* repo, git_tree* root, const std::filesyste
 
       return tree;
     }
+    git_tree_entry_free(entry);
     return gd_unexpected(gd::ErrorType::BadDir, path.string() + " is not a directory");
 }
 
@@ -159,6 +160,10 @@ createRepository(const std::string& fullpath, const std::string& name) noexcept 
 
 Result<gd::entry_t>
 getTreeEntry(const git_tree* root, const std::string& fullpath) {
+  if (!root)
+    return gd_unexpected(gd::ErrorType::InitialContext,
+                         "No committed tree available to look up '" + fullpath + "'");
+
   git_tree_entry* entry;
   if (git_tree_entry_bypath(&entry, root, fullpath.c_str()) != 0 )
     return gd_unexpected();
