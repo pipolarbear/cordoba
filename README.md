@@ -249,6 +249,16 @@ The project uses CMake presets for consistent builds across environments.
 | `Release`         | Optimized release build             |
 | `ReleaseSanitize` | Release build with sanitizers       |
 
+`DebugSanitize` and `ReleaseSanitize` compile with AddressSanitizer and
+UndefinedBehaviorSanitizer (`-fsanitize=address,undefined`). Run the suite under
+them with:
+
+```bash
+cmake --preset DebugSanitize
+cmake --build build/s.debug
+cd build/s.debug && ctest --output-on-failure -R "^(crud|greens)$"
+```
+
 **List available presets:**
 
 ```bash
@@ -260,15 +270,27 @@ cmake --list-presets
 **Using just (recommended):**
 
 ```bash
-devbox run just build Release
+devbox run just build Release          # Release build (no tests/examples)
+devbox run just build Release true     # force gd_BUILD_APPS=ON (tests/examples)
+devbox run just build Debug            # Debug build, no tests/examples
 ```
+
+`just build <flavor> [withApps]`: `withApps` is optional and forces
+`gd_BUILD_APPS=ON`; when omitted, the preset's own setting applies (only the
+`DebugSanitize` and `ReleaseSanitize` presets enable tests/examples).
 
 **Using just with other presets:**
 
 ```bash
-devbox run just build Debug
 devbox run just build DebugSanitize
 devbox run just build ReleaseSanitize
+```
+
+**Cleaning:**
+
+```bash
+devbox run just clean           # remove all build artifacts
+devbox run just clean Release   # remove build/release only
 ```
 
 **Building manually:**
@@ -732,7 +754,7 @@ C⊕rdoba is written in modern C++ and requires gcc-14 or later. All new feature
 must be covered by unit or integration tests. Run tests with:
 
 ```bash
-devbox run just test    # Unit tests (74 assertions)
+devbox run just test    # Unit tests (101 assertions)
 devbox run just stress  # Stress tests
 ```
 

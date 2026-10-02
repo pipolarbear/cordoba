@@ -1,16 +1,34 @@
 
 REPO := `find /tmp/test/ -maxdepth 1 -type d -printf "%T+ %p\n" | sort -r | head -1 | cut -f2 -d" "`
 
-# Build using CMake preset. Usage: just build Release
-build preset:
+# Build using CMake preset. Usage: just build <flavor> [withApps]
+# `withApps` (optional) forces gd_BUILD_APPS=ON to build tests/examples;
+# otherwise the preset's own setting applies.
+build preset withApps="false":
   #!/usr/bin/bash
-  cmake --preset {{preset}} -Wno-dev
+  apps=""
+  case "{{withApps}}" in
+    true|True|TRUE|1|on|On|ON|yes|Yes|YES) apps="-Dgd_BUILD_APPS=ON" ;;
+  esac
+  cmake --preset {{preset}} -Wno-dev $apps
   case "{{preset}}" in
     Debug) cmake --build build/debug ;;
     Release) cmake --build build/release ;;
     DebugSanitize) cmake --build build/s.debug ;;
     ReleaseSanitize) cmake --build build/s.release ;;
     *) cmake --build build/{{preset}} ;;
+  esac
+
+# Remove build artifacts. Usage: just clean [flavor] (no flavor removes all of build/)
+clean flavor="":
+  #!/usr/bin/bash
+  case "{{flavor}}" in
+    "") rm -rf build ;;
+    Debug) rm -rf build/debug ;;
+    Release) rm -rf build/release ;;
+    DebugSanitize) rm -rf build/s.debug ;;
+    ReleaseSanitize) rm -rf build/s.release ;;
+    *) rm -rf build/{{flavor}} ;;
   esac
 
 # Run unit tests
