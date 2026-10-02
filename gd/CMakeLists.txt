@@ -51,10 +51,11 @@ include(CheckCCompilerFlag)
 check_c_compiler_flag(-Wno-incompatible-pointer-types SUPPRESS_INCOMPATIBLE_PT_WARNING)
 check_c_compiler_flag(-Wno-misleading-indentation SUPPRESS_MISLEADING_INDENTATION)
 
-# Silence glibc's "_FORTIFY_SOURCE requires compiling with optimization (-O)"
-# warning emitted while building libgit2's bundled C code in Debug. Only affects
-# C compilation; our own targets are C++.
-add_compile_options($<$<COMPILE_LANGUAGE:C>:-Wno-cpp>)
+# Silence warnings emitted by libgit2's bundled C sources (third-party). This
+# also drops the glibc "_FORTIFY_SOURCE requires optimization" #warning and the
+# "unrecognized command-line option" notes from Clang-only flags. Our own
+# targets are C++, so this only affects the fetched dependencies.
+add_compile_options($<$<COMPILE_LANGUAGE:C>:-w>)
 
 # Fetch libgit2 v1.9.1 (v1.5+ uses OBJECT library)
 CPMAddPackage("gh:libgit2/libgit2@1.9.1")
