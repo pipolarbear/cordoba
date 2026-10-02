@@ -131,7 +131,7 @@ TEST_CASE("Simple CRUD no commit", "[crud] [nocommit]") {
       .and_then(read(initialFile));
   
       REQUIRE(!result == true);
-      REQUIRE(result.error()._msg == "File deleted in uncommitted context");
+      REQUIRE(result.error()._type == ErrorType::NotFound);
     }
 
     SECTION("shorthand") {
@@ -141,7 +141,7 @@ TEST_CASE("Simple CRUD no commit", "[crud] [nocommit]") {
       >> read(initialFile);
     
       REQUIRE(!result == true);
-      REQUIRE(result.error()._msg == "File deleted in uncommitted context");
+      REQUIRE(result.error()._type == ErrorType::NotFound);
     }
   }
 }
@@ -667,6 +667,52 @@ TEST_CASE("Reading a missing file on a fresh repository", "[crud] [read]") {
   cleanRepo(testRepoPath);
 
   auto result = selectRepository(testRepoPath) >> read("missing");
+
+  REQUIRE(!result);
+  REQUIRE(result.error()._type == ErrorType::NotFound);
+}
+
+TEST_CASE("Move an uncommitted file", "[crud] [mv]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath)
+    >> add("a", "x")
+    >> mv("a", "b")
+    >> commit("test", "test@test.com", "move pending file")
+    >> read("b");
+
+  REQUIRE(!!result);
+  REQUIRE(result->content() == "x");
+
+  auto gone = selectRepository(testRepoPath) >> read("a");
+  REQUIRE(!gone);
+  REQUIRE(gone.error()._type == ErrorType::NotFound);
+}
+
+TEST_CASE("Move a non-existent file", "[crud] [mv]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath)
+    >> add("a", "x")
+    >> commit("test", "test@test.com", "seed")
+    >> mv("missing", "b");
+
+  REQUIRE(!result);
+  REQUIRE(result.error()._type == ErrorType::NotFound);
+}
+
+TEST_CASE("Delete a committed directory", "[crud] [del]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath)
+    >> add("dir/file", "x")
+    >> commit("test", "test@test.com", "seed")
+    >> del("dir")
+    >> commit("test", "test@test.com", "remove directory")
+    >> read("dir/file");
 
   REQUIRE(!result);
   REQUIRE(result.error()._type == ErrorType::NotFound);

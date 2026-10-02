@@ -53,6 +53,15 @@ namespace gd {
         return git_oid_iszero(&oid_);
       }
 
+      /// @brief Copies this update targeting a different path
+      /// @param fullpath The destination path (only its filename is used)
+      /// @return A new ObjectUpdate with the same oid/mode/action and the new name
+      ObjectUpdate cloneTo(const std::filesystem::path& fullpath) const noexcept {
+        ObjectUpdate clone{fullpath.filename(), mod_, action_};
+        git_oid_cpy(&clone.oid_, &oid_);
+        return clone;
+      }
+
       /// @brief Creates a blob (gitspeak for a file) on a 'fullpath' location with 'content'
       /// @param ctx The context used to access the repository
       /// @param fullpath Full path of the blob including the actual file name
@@ -117,9 +126,24 @@ namespace gd {
     /// @param fullpath  Directory owning the object. Example: from/root
     /// @param obj and Object representing a directory or file
     /// Collects objects per dir 
-    void insert(const std::filesystem::path& dir, const ObjectUpdate&& obj) noexcept;
+    void insert(const std::filesystem::path& dir, ObjectUpdate&& obj) noexcept;
 
     public:
+
+    /// @brief Returns the latest pending update for a path, or nullptr if none
+    /// @param fullpath Full path including filename
+    /// @return A pointer into the collector (valid until the next mutation), or nullptr
+    const ObjectUpdate* latest(const std::filesystem::path& fullpath) const noexcept;
+
+    /// @brief Appends an already-built update to the collector
+    /// @param fullpath Full path including filename
+    /// @param obj The update to append
+    void append(const std::filesystem::path& fullpath, ObjectUpdate&& obj) noexcept;
+
+    /// @brief Cancels the latest pending update for a path
+    /// @param fullpath Full path including filename
+    /// @return True if an update was found and removed, otherwise false
+    bool cancel(const std::filesystem::path& fullpath) noexcept;
 
     /// @brief inserts a Blob(gitspeak for File) into a directory
     /// @param ctx the context used to access the repository

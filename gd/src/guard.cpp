@@ -15,14 +15,23 @@ getBlobById(git_repository* repo, git_oid const * blobId) noexcept {
 
 Result<gd::blob_t>
 getBlobFromTreeByPath(git_tree const * root, const std::filesystem::path& path) noexcept {
-  git_object *object;
+  if (!root)
+    return gd_unexpected(gd::ErrorType::NotFound,
+                         "the path '" + path.string() + "' does not exist in the given tree");
+
+  git_object *object = nullptr;
   int result = git_object_lookup_bypath(&object, reinterpret_cast<const git_object*>(root), path.c_str(), GIT_OBJECT_BLOB);
-  if (result != 0)
-    return gd_unexpected();
+  if (result != 0) {
+    const git_error *err = git_error_last();
+    const auto type = (result == GIT_ENOTFOUND) ? gd::ErrorType::NotFound
+                                                : gd::ErrorType::GitError;
+    return gd_unexpected(type, err ? std::string(err->message) : std::string("not found"));
+  }
 
   if (git_object_type(object) == GIT_OBJECT_BLOB) 
     return reinterpret_cast<git_blob*>(object);
 
+  git_object_free(object);
   return gd_unexpected(gd::ErrorType::BadFile, path.string() + " is not a file(blob)");
 }
 

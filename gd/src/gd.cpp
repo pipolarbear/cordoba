@@ -262,17 +262,55 @@ gd::ObjectUpdate::createDir(const std::filesystem::path &fullpath,
  *                             internal::TreeBuilder
  *                  Collect updates per directory to be written on commit
  *******************************************************************************/
-void gd::TreeCollector::insert(const std::filesystem::path &fullpath,
-                               const ObjectUpdate &&obj) noexcept {
-  if (auto itr = dirObjs_.find(fullpath); itr != dirObjs_.end()) {
-    itr->second.emplace_back(std::move(obj));
-    sLogger->debug("TreeCollector: '{}' update added to directory /{}",
-                   obj.name(), fullpath);
+void gd::TreeCollector::insert(const std::filesystem::path &dir,
+                               ObjectUpdate &&obj) noexcept {
+  const std::string name = obj.name();
+  if (auto itr = dirObjs_.find(dir); itr != dirObjs_.end()) {
+    itr->second.push_back(std::move(obj));
   } else {
-    dirObjs_.emplace(fullpath, ObjectList(1, obj));
-    sLogger->debug("TreeCollector: '{}' update added to new directory /{}",
-                   obj.name(), fullpath);
+    ObjectList list;
+    list.push_back(std::move(obj));
+    dirObjs_.emplace(dir, std::move(list));
   }
+  sLogger->debug("TreeCollector: '{}' update added to directory /{}", name, dir);
+}
+
+const gd::ObjectUpdate *
+gd::TreeCollector::latest(const std::filesystem::path &fullpath) const noexcept {
+  auto itr = dirObjs_.find(fullpath.parent_path().relative_path());
+  if (itr == dirObjs_.end())
+    return nullptr;
+
+  const auto name = fullpath.filename();
+  const auto &list = itr->second;
+  for (auto i = list.size(); i-- > 0;) {
+    if (list[i].name() == name)
+      return &list[i];
+  }
+  return nullptr;
+}
+
+void gd::TreeCollector::append(const std::filesystem::path &fullpath,
+                               ObjectUpdate &&obj) noexcept {
+  insert(fullpath.parent_path().relative_path(), std::move(obj));
+}
+
+bool gd::TreeCollector::cancel(const std::filesystem::path &fullpath) noexcept {
+  auto itr = dirObjs_.find(fullpath.parent_path().relative_path());
+  if (itr == dirObjs_.end())
+    return false;
+
+  auto &list = itr->second;
+  const auto name = fullpath.filename();
+  for (auto i = list.size(); i-- > 0;) {
+    if (list[i].name() == name) {
+      list.erase(list.begin() + static_cast<std::ptrdiff_t>(i));
+      if (list.empty())
+        dirObjs_.erase(itr);
+      return true;
+    }
+  }
+  return false;
 }
 
 Result<void>
@@ -566,11 +604,30 @@ Result<gd::Context> gd::ni::rm(gd::Context &&ctx,
   if (not ctx.repo_)
     return gd_unexpected(gd::ErrorType::MissingRepository, sNoRepositoryError);
 
+  const auto *pending = ctx.updates_.latest(fullpath);
+  if (pending && pending->isDelete())
+    return gd_unexpected(gd::ErrorType::NotFound,
+                         "the path '" + fullpath + "' does not exist in the given tree");
+
+  if (pending) {
+    // An update shadows the committed tree: a committed entry must be removed,
+    // otherwise (a pure uncommitted add) the delete is a net no-op.
+    if (!!getTreeEntry(ctx.tip_.root_, fullpath))
+      ctx.updates_.removeFile(ctx, fullpath);
+    else
+      ctx.updates_.cancel(fullpath);
+    return std::move(ctx);
+  }
+
+  if (!getTreeEntry(ctx.tip_.root_, fullpath))
+    return gd_unexpected(gd::ErrorType::NotFound,
+                         "the path '" + fullpath + "' does not exist in the given tree");
+
   auto res = ctx.updates_.removeFile(ctx, fullpath);
   if (!res)
     return gd_unexpected();
 
-  sLogger->debug("Remove file", fullpath);
+  sLogger->debug("Remove file {}", fullpath);
   return std::move(ctx);
 }
 
@@ -585,9 +642,29 @@ Result<gd::Context> gd::ni::mv(gd::Context &&ctx, const std::string &fullpath,
   if (not ctx.repo_)
     return gd_unexpected(gd::ErrorType::MissingRepository, sNoRepositoryError);
 
+  const auto *pending = ctx.updates_.latest(fullpath);
+  if (pending && pending->isDelete())
+    return gd_unexpected(gd::ErrorType::NotFound,
+                         "the path '" + fullpath + "' does not exist in the given tree");
+
+  if (pending) {
+    // Move the pending (uncommitted) version; a committed source must still be
+    // removed, otherwise it is simply cancelled.
+    auto moved = pending->cloneTo(toFullPath);
+    ctx.updates_.append(toFullPath, std::move(moved));
+    if (!!getTreeEntry(ctx.tip_.root_, fullpath))
+      ctx.updates_.removeFile(ctx, fullpath);
+    else
+      ctx.updates_.cancel(fullpath);
+
+    sLogger->debug("Move {} to {}", fullpath, toFullPath);
+    return std::move(ctx);
+  }
+
   auto entry = getTreeEntry(ctx.tip_.root_, fullpath);
   if (!entry)
-    return gd_unexpected(std::move(entry));
+    return gd_unexpected(gd::ErrorType::NotFound,
+                         "the path '" + fullpath + "' does not exist in the given tree");
 
   auto res = ctx.updates_.insertEntry(ctx, toFullPath, *entry);
   if (!res)
