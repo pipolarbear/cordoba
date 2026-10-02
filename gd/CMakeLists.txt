@@ -26,6 +26,8 @@ set_target_properties(gd
     DEBUG_POSTFIX _d
 )
 
+gd_enable_sanitizers(gd)
+
 # Debug/Release compile flags
 list(APPEND CXX_FLAGS_DEBUG   -g3 -frecord-gcc-switches)
 list(APPEND CXX_FLAGS_RELEASE -g3)
@@ -48,6 +50,12 @@ include(../cmake/CPM.cmake)
 include(CheckCCompilerFlag)
 check_c_compiler_flag(-Wno-incompatible-pointer-types SUPPRESS_INCOMPATIBLE_PT_WARNING)
 check_c_compiler_flag(-Wno-misleading-indentation SUPPRESS_MISLEADING_INDENTATION)
+
+# Silence warnings emitted by libgit2's bundled C sources (third-party). This
+# also drops the glibc "_FORTIFY_SOURCE requires optimization" #warning and the
+# "unrecognized command-line option" notes from Clang-only flags. Our own
+# targets are C++, so this only affects the fetched dependencies.
+add_compile_options($<$<COMPILE_LANGUAGE:C>:-w>)
 
 # Fetch libgit2 v1.9.1 (v1.5+ uses OBJECT library)
 CPMAddPackage("gh:libgit2/libgit2@1.9.1")
@@ -84,20 +92,6 @@ CPMAddPackage("gh:CLIUtils/CLI11@2.4.2")
 
 target_link_libraries(gd PUBLIC spdlog)
 
-# Sanitizer support
-set(BUILD_PROPERTIES
-  CXX_STANDARD 23
-  CXX_EXTENSIONS OFF
-  CXX_STANDARD_REQUIRED ON
-)
-
-if(SANITIZE)
-  list(APPEND BUILD_PROPERTIES
-    CXX_FLAGS "-fsanitize=address"
-    LINK_FLAGS "-fsanitize=address"
-  )
-endif()
-
 # Tests - only when BUILD_APPS is ON
 if(gd_BUILD_APPS)
   # crud test (Catch2 unit tests)
@@ -112,6 +106,7 @@ if(gd_BUILD_APPS)
   target_link_libraries(crud PUBLIC CLI11)
   target_link_libraries(crud PRIVATE Catch2WithMain gd::gd stdc++fs)
   target_include_directories(crud PRIVATE inc)
+  gd_enable_sanitizers(crud)
   add_test(NAME crud COMMAND $<TARGET_FILE:crud>)
 
   # greens test (stress test with arguments)
@@ -126,6 +121,7 @@ if(gd_BUILD_APPS)
   target_link_libraries(greens PUBLIC CLI11)
   target_link_libraries(greens PRIVATE Catch2WithMain gd::gd stdc++fs)
   target_include_directories(greens PRIVATE inc)
+  gd_enable_sanitizers(greens)
   add_test(NAME greens COMMAND $<TARGET_FILE:greens> -g 5 -b 10 -c 30 -o 50)
 endif()
 

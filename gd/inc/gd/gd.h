@@ -163,6 +163,9 @@ namespace gd
   setLogger(std::shared_ptr<spdlog::logger> newLogger) noexcept;
 
   /// @brief Removes a repository
+  /// @warning Not thread-safe. Must not be called concurrently with itself or
+  ///          with any other library operation. Any Context previously obtained
+  ///          for `repoFullPath` is invalidated by this call.
   /// @param repoFullPath full path to repository 
   /// @return return true if a filesystem repo was removed
   bool 
@@ -289,7 +292,7 @@ namespace gd
   /// @return On success returns a context for continuation, otherwise an Error
   inline auto createBranch(const git_oid* commitId, const std::string& name) noexcept
   {
-    return [&commitId, &name](Context &&ctx) -> Result<Context> {
+    return [commitId, &name](Context &&ctx) -> Result<Context> {
       return ni::createBranch(std::move(ctx), commitId, name);
     };
   }

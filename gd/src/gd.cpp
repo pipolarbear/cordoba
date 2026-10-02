@@ -85,15 +85,20 @@ public:
   /// @brief Removes directory 'repoFullPath' if exists
   /// @param repoFullPath Path to the Repository
   /// @return True if the repository existed, otherwise false
+  /// @note Callers must serialize cleanRepo (see the gd::cleanRepo contract).
+  ///       The exclusive lock only guards the cache mutation; it does not make
+  ///       concurrent use of this method safe.
   bool cleanRepo(const std::filesystem::path &repoFullPath) noexcept {
     bool removed = false;
-    std::shared_lock<std::shared_mutex> guard(cacheAccess_);
-    if (auto itr{repoCache_.find(repoFullPath)}; itr != repoCache_.end()) {
-      repoCache_.erase(repoFullPath);
-      removed = true;
+    {
+      std::lock_guard<std::shared_mutex> guard(cacheAccess_);
+      if (auto itr{repoCache_.find(repoFullPath)}; itr != repoCache_.end()) {
+        repoCache_.erase(itr);
+        removed = true;
+      }
     }
-    std::filesystem::remove_all(repoFullPath);
-    ;
+    std::error_code ec;
+    std::filesystem::remove_all(repoFullPath, ec);
     return removed;
   }
 
@@ -257,17 +262,55 @@ gd::ObjectUpdate::createDir(const std::filesystem::path &fullpath,
  *                             internal::TreeBuilder
  *                  Collect updates per directory to be written on commit
  *******************************************************************************/
-void gd::TreeCollector::insert(const std::filesystem::path &fullpath,
-                               const ObjectUpdate &&obj) noexcept {
-  if (auto itr = dirObjs_.find(fullpath); itr != dirObjs_.end()) {
-    itr->second.emplace_back(std::move(obj));
-    sLogger->debug("TreeCollector: '{}' update added to directory /{}",
-                   obj.name(), fullpath);
+void gd::TreeCollector::insert(const std::filesystem::path &dir,
+                               ObjectUpdate &&obj) noexcept {
+  const std::string name = obj.name();
+  if (auto itr = dirObjs_.find(dir); itr != dirObjs_.end()) {
+    itr->second.push_back(std::move(obj));
   } else {
-    dirObjs_.emplace(fullpath, ObjectList(1, obj));
-    sLogger->debug("TreeCollector: '{}' update added to new directory /{}",
-                   obj.name(), fullpath);
+    ObjectList list;
+    list.push_back(std::move(obj));
+    dirObjs_.emplace(dir, std::move(list));
   }
+  sLogger->debug("TreeCollector: '{}' update added to directory /{}", name, dir);
+}
+
+const gd::ObjectUpdate *
+gd::TreeCollector::latest(const std::filesystem::path &fullpath) const noexcept {
+  auto itr = dirObjs_.find(fullpath.parent_path().relative_path());
+  if (itr == dirObjs_.end())
+    return nullptr;
+
+  const auto name = fullpath.filename();
+  const auto &list = itr->second;
+  for (auto i = list.size(); i-- > 0;) {
+    if (list[i].name() == name)
+      return &list[i];
+  }
+  return nullptr;
+}
+
+void gd::TreeCollector::append(const std::filesystem::path &fullpath,
+                               ObjectUpdate &&obj) noexcept {
+  insert(fullpath.parent_path().relative_path(), std::move(obj));
+}
+
+bool gd::TreeCollector::cancel(const std::filesystem::path &fullpath) noexcept {
+  auto itr = dirObjs_.find(fullpath.parent_path().relative_path());
+  if (itr == dirObjs_.end())
+    return false;
+
+  auto &list = itr->second;
+  const auto name = fullpath.filename();
+  for (auto i = list.size(); i-- > 0;) {
+    if (list[i].name() == name) {
+      list.erase(list.begin() + static_cast<std::ptrdiff_t>(i));
+      if (list.empty())
+        dirObjs_.erase(itr);
+      return true;
+    }
+  }
+  return false;
 }
 
 Result<void>
@@ -287,6 +330,8 @@ gd::TreeCollector::insertEntry(gd::Context &ctx,
                                const std::filesystem::path &fullpath,
                                const git_tree_entry *entry) noexcept {
   auto blobResult = ObjectUpdate::fromEntry(ctx, fullpath, entry);
+  if (!blobResult)
+    return gd_unexpected(std::move(blobResult));
 
   insert(fullpath.parent_path().relative_path(), std::move(*blobResult));
   return Result<void>();
@@ -306,7 +351,8 @@ gd::TreeCollector::removeFile(gd::Context &ctx,
 /// @return On success returns RAII flavoured git_tree which is the new root
 /// tree containing updates, otherwise an Error.
 Result<gd::tree_t> gd::TreeCollector::apply(gd::Context &ctx) noexcept {
-  git_oid const *treeOid = nullptr;
+  git_oid treeOid;
+  bool hasTree = false;
 
   for (const auto &[dir, objs] : dirObjs_) {
     bool isRootDir = dir.empty();
@@ -329,7 +375,8 @@ Result<gd::tree_t> gd::TreeCollector::apply(gd::Context &ctx) noexcept {
     if (auto parentDir = ObjectUpdate::createDir(dir, *bld); !parentDir) {
       return gd_unexpected(std::move(parentDir));
     } else {
-      treeOid = parentDir->oid();
+      git_oid_cpy(&treeOid, parentDir->oid());
+      hasTree = true;
 
       if (!isRootDir) {
         insert(dir.parent_path(), std::move(*parentDir));
@@ -337,11 +384,11 @@ Result<gd::tree_t> gd::TreeCollector::apply(gd::Context &ctx) noexcept {
     }
   }
 
-  if (treeOid == nullptr)
+  if (!hasTree)
     return gd_unexpected(gd::ErrorType::EmptyCommit, "No updates made");
 
   dirObjs_.clear(); // Clear updates only on success
-  return getTree(*ctx.repo_, treeOid);
+  return getTree(*ctx.repo_, &treeOid);
 }
 
 Result<gd::blob_t> gd::TreeCollector::getBlobByPath(
@@ -557,11 +604,30 @@ Result<gd::Context> gd::ni::rm(gd::Context &&ctx,
   if (not ctx.repo_)
     return gd_unexpected(gd::ErrorType::MissingRepository, sNoRepositoryError);
 
+  const auto *pending = ctx.updates_.latest(fullpath);
+  if (pending && pending->isDelete())
+    return gd_unexpected(gd::ErrorType::NotFound,
+                         "the path '" + fullpath + "' does not exist in the given tree");
+
+  if (pending) {
+    // An update shadows the committed tree: a committed entry must be removed,
+    // otherwise (a pure uncommitted add) the delete is a net no-op.
+    if (!!getTreeEntry(ctx.tip_.root_, fullpath))
+      ctx.updates_.removeFile(ctx, fullpath);
+    else
+      ctx.updates_.cancel(fullpath);
+    return std::move(ctx);
+  }
+
+  if (!getTreeEntry(ctx.tip_.root_, fullpath))
+    return gd_unexpected(gd::ErrorType::NotFound,
+                         "the path '" + fullpath + "' does not exist in the given tree");
+
   auto res = ctx.updates_.removeFile(ctx, fullpath);
   if (!res)
     return gd_unexpected();
 
-  sLogger->debug("Remove file", fullpath);
+  sLogger->debug("Remove file {}", fullpath);
   return std::move(ctx);
 }
 
@@ -576,9 +642,29 @@ Result<gd::Context> gd::ni::mv(gd::Context &&ctx, const std::string &fullpath,
   if (not ctx.repo_)
     return gd_unexpected(gd::ErrorType::MissingRepository, sNoRepositoryError);
 
+  const auto *pending = ctx.updates_.latest(fullpath);
+  if (pending && pending->isDelete())
+    return gd_unexpected(gd::ErrorType::NotFound,
+                         "the path '" + fullpath + "' does not exist in the given tree");
+
+  if (pending) {
+    // Move the pending (uncommitted) version; a committed source must still be
+    // removed, otherwise it is simply cancelled.
+    auto moved = pending->cloneTo(toFullPath);
+    ctx.updates_.append(toFullPath, std::move(moved));
+    if (!!getTreeEntry(ctx.tip_.root_, fullpath))
+      ctx.updates_.removeFile(ctx, fullpath);
+    else
+      ctx.updates_.cancel(fullpath);
+
+    sLogger->debug("Move {} to {}", fullpath, toFullPath);
+    return std::move(ctx);
+  }
+
   auto entry = getTreeEntry(ctx.tip_.root_, fullpath);
   if (!entry)
-    return gd_unexpected(std::move(entry));
+    return gd_unexpected(gd::ErrorType::NotFound,
+                         "the path '" + fullpath + "' does not exist in the given tree");
 
   auto res = ctx.updates_.insertEntry(ctx, toFullPath, *entry);
   if (!res)
@@ -658,10 +744,10 @@ Result<gd::Context> gd::ni::createBranch(gd::Context &&ctx,
                                          const git_oid *commitId,
                                          const std::string &name) noexcept {
   auto commit = getCommitById(*ctx.repo_, commitId);
-  if (*commit)
+  if (!commit)
     return gd_unexpected(std::move(commit));
 
-  auto branchRef = createBranch(*ctx.repo_, name, ctx.tip_.commit_);
+  auto branchRef = createBranch(*ctx.repo_, name, *commit);
   if (!branchRef)
     return gd_unexpected(std::move(branchRef));
 

@@ -6,25 +6,6 @@ CMAKE_MINIMUM_REQUIRED(VERSION 3.14 FATAL_ERROR)
 list(APPEND NAMES speed          example)
 list(APPEND SRCS  timing.cpp     example.cpp)
 
-set(BUILD_PROPERTIES
-  CXX_STANDARD 23
-  CXX_EXTENSIONS OFF
-  CXX_STANDARD_REQUIRED ON
-)
-
-if(SANITIZE)
-  list(APPEND BUILD_PROPERTIES
-    CXX_FLAGS "-fsanitize=address"
-    LINK_FLAGS "-fsanitize=address"
-  )
-endif()
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  list(APPEND BUILD_PROPERTIES
-    CXX_FLAGS "-fcoroutines"
-  )
-endif()
-
 foreach(APP_NAME APP_SRC IN ZIP_LISTS NAMES SRCS)
   message(STATUS "Building example: ${APP_NAME} from ${APP_SRC}")
   
@@ -33,9 +14,17 @@ foreach(APP_NAME APP_SRC IN ZIP_LISTS NAMES SRCS)
   
   set_target_properties(${APP_NAME}
     PROPERTIES
-      ${BUILD_PROPERTIES}
+      CXX_STANDARD 23
+      CXX_EXTENSIONS OFF
+      CXX_STANDARD_REQUIRED ON
   )
-  
+
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(${APP_NAME} PRIVATE -fcoroutines)
+  endif()
+
+  gd_enable_sanitizers(${APP_NAME})
+
   # Link with gd library (OpenSSL is transitively linked through libgit2)
   target_link_libraries(${APP_NAME} PUBLIC gd::gd)
   

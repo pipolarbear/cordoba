@@ -20,6 +20,7 @@
       "binaryDir": "${sourceDir}/build/s.debug",
       "cacheVariables": {
         "SANITIZE": "On",
+        "gd_BUILD_APPS": "ON",
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "YES"
       }
@@ -43,6 +44,7 @@
       "binaryDir": "${sourceDir}/build/s.release",
       "cacheVariables": {
         "SANITIZE": "On",
+        "gd_BUILD_APPS": "ON",
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "YES"
       }

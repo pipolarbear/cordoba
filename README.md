@@ -1,12 +1,12 @@
 <h1 align=center><code>C⊕rdoba</code></h1>
 <div align=center>
 
-[![Version](<https://img.shields.io/github/v/tag/perplexedpigmy/cordoba?label=Version&pattern=v(.+)>)](https://github.com/perplexedpigmy/cordoba/releases)
-[![Build](https://github.com/perplexedpigmy/cordoba/actions/workflows/build.yaml/badge.svg)](https://github.com/perplexedpigmy/cordoba/actions)
+[![Version](<https://img.shields.io/github/v/tag/pipolarbear/cordoba?label=Version&pattern=v(.+)>)](https://github.com/pipolarbear/cordoba/releases)
+[![Build](https://github.com/pipolarbear/cordoba/actions/workflows/build.yaml/badge.svg)](https://github.com/pipolarbear/cordoba/actions)
 [![License](https://img.shields.io/badge/license-CC0-blue.svg)](LICENSE)
 [![C++](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B23)
 [![libgit2](https://img.shields.io/badge/libgit2-1.9-blue.svg)](https://libgit2.org/)
-[![Contributor](https://img.shields.io/github/contributors/perplexedpigmy/cordoba)](https://github.com/perplexedpigmy/cordoba/graphs/contributors)
+[![Contributor](https://img.shields.io/github/contributors/pipolarbear/cordoba)](https://github.com/pipolarbear/cordoba/graphs/contributors)
 
 </div>
 
@@ -123,7 +123,7 @@ include(cmake/CPM.cmake)
 set(gd_BUILD_APPS ON)
 
 # Fetch C⊕rdoba from GitHub
-CPMAddPackage("gh:perplexedpigmy/cordoba@0.3.0")
+CPMAddPackage("gh:pipolarbear/cordoba@0.3.0")
 
 # Your executable links against the gd library
 add_executable(your_app src/your_app.cpp)
@@ -160,7 +160,7 @@ If your project already has `cmake/CPM.cmake`:
 ```cmake
 # In your cmake/CPM.cmake or top-level CMakeLists.txt
 set(gd_BUILD_APPS OFF)  # Don't build tests/examples
-CPMAddPackage("gh:perplexedpigmy/cordoba")
+CPMAddPackage("gh:pipolarbear/cordoba")
 
 target_link_libraries(your_app PRIVATE gd::gd)
 ```
@@ -170,7 +170,7 @@ target_link_libraries(your_app PRIVATE gd::gd)
 **Prerequisites:** GCC 14+, CMake 3.14+, Ninja or Make
 
 ```bash
-git clone https://github.com/perplexedpigmy/cordoba
+git clone https://github.com/pipolarbear/cordoba
 cd cordoba
 
 # Configure with CMake (or use presets)
@@ -249,6 +249,16 @@ The project uses CMake presets for consistent builds across environments.
 | `Release`         | Optimized release build             |
 | `ReleaseSanitize` | Release build with sanitizers       |
 
+`DebugSanitize` and `ReleaseSanitize` compile with AddressSanitizer and
+UndefinedBehaviorSanitizer (`-fsanitize=address,undefined`). Run the suite under
+them with:
+
+```bash
+cmake --preset DebugSanitize
+cmake --build build/s.debug
+cd build/s.debug && ctest --output-on-failure -R "^(crud|greens)$"
+```
+
 **List available presets:**
 
 ```bash
@@ -260,15 +270,27 @@ cmake --list-presets
 **Using just (recommended):**
 
 ```bash
-devbox run just build Release
+devbox run just build Release          # Release build (no tests/examples)
+devbox run just build Release true     # force gd_BUILD_APPS=ON (tests/examples)
+devbox run just build Debug            # Debug build, no tests/examples
 ```
+
+`just build <flavor> [withApps]`: `withApps` is optional and forces
+`gd_BUILD_APPS=ON`; when omitted, the preset's own setting applies (only the
+`DebugSanitize` and `ReleaseSanitize` presets enable tests/examples).
 
 **Using just with other presets:**
 
 ```bash
-devbox run just build Debug
 devbox run just build DebugSanitize
 devbox run just build ReleaseSanitize
+```
+
+**Cleaning:**
+
+```bash
+devbox run just clean           # remove all build artifacts
+devbox run just clean Release   # remove build/release only
 ```
 
 **Building manually:**
@@ -732,7 +754,7 @@ C⊕rdoba is written in modern C++ and requires gcc-14 or later. All new feature
 must be covered by unit or integration tests. Run tests with:
 
 ```bash
-devbox run just test    # Unit tests (74 assertions)
+devbox run just test    # Unit tests (101 assertions)
 devbox run just stress  # Stress tests
 ```
 

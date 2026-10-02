@@ -29,3 +29,24 @@ jobs:
     - name: Run Tests with CTest
       run: |
         cd build/release && ctest --output-on-failure -R "^(crud|greens)$"
+
+  sanitize:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install GCC 14
+      uses: egor-tensin/setup-gcc@v1
+      with:
+        gcc-version: 14
+
+    - name: Configure and Build (Address + UndefinedBehavior sanitizers)
+      run: |
+        cmake --preset DebugSanitize
+        cmake --build build/s.debug
+
+    - name: Run Tests with CTest (sanitized)
+      run: |
+        cd build/s.debug && ctest --output-on-failure -R "^(crud|greens)$"

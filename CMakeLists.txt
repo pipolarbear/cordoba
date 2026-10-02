@@ -3,6 +3,23 @@ project(cordoba VERSION 0.3.0)
 
 unset(ENV{GIT_DIR})
 
+# Sanitizer support. Only our own targets are instrumented; libgit2 is
+# validated separately with valgrind/memcheck.
+option(SANITIZE "Enable Address + UndefinedBehavior sanitizers" OFF)
+
+function(gd_enable_sanitizers target)
+  if(SANITIZE)
+    target_compile_options(${target} PRIVATE
+      -fsanitize=address,undefined
+      -fno-omit-frame-pointer
+      -g
+    )
+    target_link_options(${target} PRIVATE
+      -fsanitize=address,undefined
+    )
+  endif()
+endfunction()
+
 # Configuration support
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY
     STRINGS Release Debug

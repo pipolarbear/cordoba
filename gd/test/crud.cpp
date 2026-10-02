@@ -131,7 +131,7 @@ TEST_CASE("Simple CRUD no commit", "[crud] [nocommit]") {
       .and_then(read(initialFile));
   
       REQUIRE(!result == true);
-      REQUIRE(result.error()._msg == "File deleted in uncommitted context");
+      REQUIRE(result.error()._type == ErrorType::NotFound);
     }
 
     SECTION("shorthand") {
@@ -141,7 +141,7 @@ TEST_CASE("Simple CRUD no commit", "[crud] [nocommit]") {
       >> read(initialFile);
     
       REQUIRE(!result == true);
-      REQUIRE(result.error()._msg == "File deleted in uncommitted context");
+      REQUIRE(result.error()._type == ErrorType::NotFound);
     }
   }
 }
@@ -552,6 +552,170 @@ TEST_CASE("Errors", "[crud] [error]") {
       REQUIRE(!result == true);
       REQUIRE(result.error()._msg == "invalid argument: 'commit'");
   }
+}
+
+TEST_CASE("Move a committed file", "[crud] [mv]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  const string initialFile{"README"};
+  const string movedFile{"MOVED"};
+  const string initialContent{"test text"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath)
+    >> add(initialFile, initialContent)
+    >> commit("test", "test@test.com", "commit message")
+    >> mv(initialFile, movedFile)
+    >> commit("test", "test@test.com", "move file")
+    >> read(movedFile);
+
+  REQUIRE(!!result);
+  REQUIRE(result->content() == initialContent);
+
+  auto gone = selectRepository(testRepoPath) >> read(initialFile);
+  REQUIRE(!gone);
+}
+
+TEST_CASE("A file cannot become a directory in one commit", "[crud] [mv]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  SECTION("transition is rejected") {
+    auto result = selectRepository(testRepoPath)
+      >> add("a", "x")
+      >> commit("test", "test@test.com", "add file a")
+      >> add("a/b", "y")
+      >> commit("test", "test@test.com", "try directory a");
+
+    REQUIRE(!result);
+    REQUIRE(result.error()._type == ErrorType::BadDir);
+  }
+
+  SECTION("remove then introduce as a directory") {
+    auto result = selectRepository(testRepoPath)
+      >> add("a", "x")
+      >> commit("test", "test@test.com", "add file a")
+      >> del("a")
+      >> commit("test", "test@test.com", "remove file a")
+      >> add("a/b", "y")
+      >> commit("test", "test@test.com", "add directory a")
+      >> read("a/b");
+
+    REQUIRE(!!result);
+    REQUIRE(result->content() == "y");
+  }
+}
+
+TEST_CASE("Branch from an explicit commit id", "[crud] [branch]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  const string initialFile{"README"};
+  const string initialContent{"test text"};
+  cleanRepo(testRepoPath);
+
+  auto r = selectRepository(testRepoPath)
+    >> add(initialFile, initialContent)
+    >> commit("test", "test@test.com", "commit message");
+  REQUIRE(!!r);
+
+  git_oid commitId;
+  git_oid_cpy(&commitId, r->getCommitId());
+
+  SECTION("a valid commit id creates a branch from that commit") {
+    auto& branched = r >> createBranch(&commitId, "fromId");
+    REQUIRE(!!branched);
+
+    auto readBack = std::move(branched) >> selectBranch("fromId") >> read(initialFile);
+    REQUIRE(!!readBack);
+    REQUIRE(readBack->content() == initialContent);
+  }
+
+  SECTION("an unknown commit id is rejected") {
+    git_oid unknown;
+    git_oid_fromstr(&unknown, "0000000000000000000000000000000000000000");
+
+    auto& branched = r >> createBranch(&unknown, "fromUnknown");
+    REQUIRE(!branched);
+  }
+}
+
+TEST_CASE("Adding then deleting a file is a no-op", "[crud] [del]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath)
+    >> add("a", "x")
+    >> del("a")
+    >> commit("test", "test@test.com", "should be empty");
+
+  REQUIRE(!result);
+  REQUIRE(result.error()._msg == "Nothing to commit");
+}
+
+TEST_CASE("Deleting a non-existent file", "[crud] [del]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath)
+    >> del("nonexistent")
+    >> commit("test", "test@test.com", "should fail cleanly");
+
+  REQUIRE(!result);
+  REQUIRE(result.error()._type == ErrorType::NotFound);
+}
+
+TEST_CASE("Reading a missing file on a fresh repository", "[crud] [read]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath) >> read("missing");
+
+  REQUIRE(!result);
+  REQUIRE(result.error()._type == ErrorType::NotFound);
+}
+
+TEST_CASE("Move an uncommitted file", "[crud] [mv]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath)
+    >> add("a", "x")
+    >> mv("a", "b")
+    >> commit("test", "test@test.com", "move pending file")
+    >> read("b");
+
+  REQUIRE(!!result);
+  REQUIRE(result->content() == "x");
+
+  auto gone = selectRepository(testRepoPath) >> read("a");
+  REQUIRE(!gone);
+  REQUIRE(gone.error()._type == ErrorType::NotFound);
+}
+
+TEST_CASE("Move a non-existent file", "[crud] [mv]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath)
+    >> add("a", "x")
+    >> commit("test", "test@test.com", "seed")
+    >> mv("missing", "b");
+
+  REQUIRE(!result);
+  REQUIRE(result.error()._type == ErrorType::NotFound);
+}
+
+TEST_CASE("Delete a committed directory", "[crud] [del]") {
+  const static string testRepoPath{"/tmp/test/unit"};
+  cleanRepo(testRepoPath);
+
+  auto result = selectRepository(testRepoPath)
+    >> add("dir/file", "x")
+    >> commit("test", "test@test.com", "seed")
+    >> del("dir")
+    >> commit("test", "test@test.com", "remove directory")
+    >> read("dir/file");
+
+  REQUIRE(!result);
+  REQUIRE(result.error()._type == ErrorType::NotFound);
 }
 
 TEST_CASE("Sanitize", "[sanitize]") {
