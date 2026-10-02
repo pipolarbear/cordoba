@@ -1,6 +1,6 @@
 FROM ubuntu:24.04
 LABEL version="1.0"
-LABEL maintainer="perplexedpigmy@xmousse.com"
+LABEL maintainer="pipolar@xmousse.com"
 LABEL description="Ubuntu based gcc 14 docker image with OpenCV"
 
 ARG USER_UID=1000
@@ -76,9 +76,9 @@ RUN \
   #
   # Insatll the bin utilit
   && sudo -i -u $USERNAME mkdir -p ${BIN_EXE_DIR} \
-  && sudo -i -u $USERNAME wget -O /tmp/bin https://github.com/perplexedpigmy/bin/releases/download/v0.17.5/bin_0.17.5_linux_amd64 \
+  && sudo -i -u $USERNAME wget -O /tmp/bin https://github.com/pipolarbear/bin/releases/download/v0.17.5/bin_0.17.5_linux_amd64 \
   && sudo -i -u $USERNAME chmod a+x /tmp/bin \
-  && sudo -i -u $USERNAME bash -c "BIN_EXE_DIR=${BIN_EXE_DIR} /tmp/bin install github.com/perplexedpigmy/bin" \
+  && sudo -i -u $USERNAME bash -c "BIN_EXE_DIR=${BIN_EXE_DIR} /tmp/bin install github.com/pipolarbear/bin" \
   && sudo -i -u $USERNAME rm /tmp/bin \
   # 
   # Install useful tools

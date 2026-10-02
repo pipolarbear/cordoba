@@ -1,12 +1,12 @@
 <h1 align=center><code>C⊕rdoba</code></h1>
 <div align=center>
 
-[![Version](<https://img.shields.io/github/v/tag/perplexedpigmy/cordoba?label=Version&pattern=v(.+)>)](https://github.com/perplexedpigmy/cordoba/releases)
-[![Build](https://github.com/perplexedpigmy/cordoba/actions/workflows/build.yaml/badge.svg)](https://github.com/perplexedpigmy/cordoba/actions)
+[![Version](<https://img.shields.io/github/v/tag/pipolarbear/cordoba?label=Version&pattern=v(.+)>)](https://github.com/pipolarbear/cordoba/releases)
+[![Build](https://github.com/pipolarbear/cordoba/actions/workflows/build.yaml/badge.svg)](https://github.com/pipolarbear/cordoba/actions)
 [![License](https://img.shields.io/badge/license-CC0-blue.svg)](LICENSE)
 [![C++](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B23)
 [![libgit2](https://img.shields.io/badge/libgit2-1.9-blue.svg)](https://libgit2.org/)
-[![Contributor](https://img.shields.io/github/contributors/perplexedpigmy/cordoba)](https://github.com/perplexedpigmy/cordoba/graphs/contributors)
+[![Contributor](https://img.shields.io/github/contributors/pipolarbear/cordoba)](https://github.com/pipolarbear/cordoba/graphs/contributors)
 
 </div>
 
@@ -123,7 +123,7 @@ include(cmake/CPM.cmake)
 set(gd_BUILD_APPS ON)
 
 # Fetch C⊕rdoba from GitHub
-CPMAddPackage("gh:perplexedpigmy/cordoba@0.3.0")
+CPMAddPackage("gh:pipolarbear/cordoba@0.3.0")
 
 # Your executable links against the gd library
 add_executable(your_app src/your_app.cpp)
@@ -160,7 +160,7 @@ If your project already has `cmake/CPM.cmake`:
 ```cmake
 # In your cmake/CPM.cmake or top-level CMakeLists.txt
 set(gd_BUILD_APPS OFF)  # Don't build tests/examples
-CPMAddPackage("gh:perplexedpigmy/cordoba")
+CPMAddPackage("gh:pipolarbear/cordoba")
 
 target_link_libraries(your_app PRIVATE gd::gd)
 ```
@@ -170,7 +170,7 @@ target_link_libraries(your_app PRIVATE gd::gd)
 **Prerequisites:** GCC 14+, CMake 3.14+, Ninja or Make
 
 ```bash
-git clone https://github.com/perplexedpigmy/cordoba
+git clone https://github.com/pipolarbear/cordoba
 cd cordoba
 
 # Configure with CMake (or use presets)

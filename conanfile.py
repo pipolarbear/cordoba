@@ -6,8 +6,8 @@ from conan.tools.build import check_min_cppstd
 class CordobaConan(ConanFile):
     name = "cordoba"
     license = "CC0-1.0"
-    author = "perplexedpigmy"
-    url = "https://github.com/perplexedpigmy/cordoba"
+    author = "pipolarbear"
+    url = "https://github.com/pipolarbear/cordoba"
     description = "Lightweight C++ library for managing versioned NoSQL documents powered by libgit2"
     topics = ("git", "database", "nosql", "version-control", "crud")
 
