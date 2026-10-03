@@ -20,6 +20,12 @@ function(gd_enable_sanitizers target)
   endif()
 endfunction()
 
+# GD_TRY uses a GNU statement expression (see expected.h); silence Clang's
+# default -Wgnu-statement-expression for our C++ targets.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wno-gnu-statement-expression>)
+endif()
+
 # Configuration support
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY
     STRINGS Release Debug

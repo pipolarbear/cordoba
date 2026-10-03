@@ -92,14 +92,12 @@ getObjectBySpec(git_repository* repo, const std::string& spec) noexcept {
 
 Result<gd::commit_t>
 getCommitByRef(git_repository* repo, const std::string& ref ) noexcept {
-  auto commitObj = getObjectBySpec(repo, ref);
-  if (!commitObj)
-    return gd_unexpected(std::move(commitObj));
+  GD_TRY_ASSIGN(commitObj, getObjectBySpec(repo, ref));
 
-  if (auto type = git_object_type(*commitObj); type != GIT_OBJECT_COMMIT)
+  if (auto type = git_object_type(commitObj); type != GIT_OBJECT_COMMIT)
     return gd_unexpected(gd::ErrorType::EmptyCommit, ref + " is '" + stringify(type) + "', while a commit is expected" );
 
-  return commitObj->castMove<git_commit, git_commit_free>();
+  return commitObj.castMove<git_commit, git_commit_free>();
 }
 
 
@@ -182,27 +180,17 @@ getTreeEntry(const git_tree* root, const std::string& fullpath) {
 
 Result<std::string>
 contentOf(git_repository* repo, git_oid const * commitId, const std::filesystem::path& fullpath) noexcept {
-  auto resCommit = getCommitById(repo, commitId);
-  if (!resCommit) 
-    return gd_unexpected(std::move(resCommit)) ;
+  GD_TRY_ASSIGN(resCommit, getCommitById(repo, commitId));
+  GD_TRY_ASSIGN(resTree, getTreeOfCommit(repo, resCommit));
+  GD_TRY_ASSIGN(resBlob, getBlobFromTreeByPath(resTree, fullpath));
 
-  auto resTree = getTreeOfCommit(repo, *resCommit);
-  if (!resTree) 
-    return gd_unexpected(std::move(resTree));
-
-  auto resBlob = getBlobFromTreeByPath(*resTree, fullpath);
-  if (!resBlob) 
-    return gd_unexpected(std::move(resBlob) );
-
-  return std::string(static_cast<const char*>(git_blob_rawcontent(*resBlob)));
+  return std::string(static_cast<const char*>(git_blob_rawcontent(resBlob)));
 }
 
 Result<git_oid const *> 
 referenceCommit(git_repository* repo, const std::string& ref) noexcept {
-    auto commitRes = getCommitByRef(repo, ref);
-    if (!commitRes) 
-      return gd_unexpected();
+    GD_TRY_ASSIGN(commitRes, getCommitByRef(repo, ref));
 
-    auto oid = git_commit_id(*commitRes); 
+    auto oid = git_commit_id(commitRes);
     return oid;
 }
