@@ -151,11 +151,9 @@ static std::shared_ptr<spdlog::logger> sLogger{
  **/
 Result<gd::Context> createRepo(const std::string &fullpath,
                                const std::string &name) noexcept {
-  auto repo = createRepository(fullpath, name);
-  if (!repo)
-    return gd_unexpected(std::move(repo));
+  GD_TRY_ASSIGN(repo, createRepository(fullpath, name));
 
-  auto pRepo = sGit.cacheRepo(fullpath, std::move(*repo));
+  auto pRepo = sGit.cacheRepo(fullpath, std::move(repo));
 
   sLogger->debug("Created repository {} with creator '{}'", fullpath, name);
   return gd::Context{pRepo, sHead};
@@ -179,11 +177,9 @@ bool repoExists(const std::filesystem::path &repoPath) noexcept {
 /// @return A context that can be used to access the repository if successful,
 /// otherwise an Error
 Result<gd::Context> connectToRepo(const std::filesystem::path &fullpath) {
-  auto repo = openRepository(fullpath);
-  if (!repo)
-    return gd_unexpected(std::move(repo));
+  GD_TRY_ASSIGN(repo, openRepository(fullpath));
 
-  auto pRepo = sGit.cacheRepo(fullpath, std::move(*repo));
+  auto pRepo = sGit.cacheRepo(fullpath, std::move(repo));
 
   sLogger->debug("Connected to repository {}", fullpath);
   auto ctx = gd::Context{pRepo, sHead};
@@ -317,11 +313,9 @@ Result<void>
 gd::TreeCollector::insertFile(gd::Context &ctx,
                               const std::filesystem::path &fullpath,
                               const std::string &content) noexcept {
-  auto blobResult = ObjectUpdate::createBlob(ctx, fullpath, content);
-  if (!blobResult)
-    return gd_unexpected();
+  GD_TRY_ASSIGN(blobResult, ObjectUpdate::createBlob(ctx, fullpath, content));
 
-  insert(fullpath.parent_path().relative_path(), std::move(*blobResult));
+  insert(fullpath.parent_path().relative_path(), std::move(blobResult));
   return Result<void>();
 }
 
@@ -329,11 +323,9 @@ Result<void>
 gd::TreeCollector::insertEntry(gd::Context &ctx,
                                const std::filesystem::path &fullpath,
                                const git_tree_entry *entry) noexcept {
-  auto blobResult = ObjectUpdate::fromEntry(ctx, fullpath, entry);
-  if (!blobResult)
-    return gd_unexpected(std::move(blobResult));
+  GD_TRY_ASSIGN(blobResult, ObjectUpdate::fromEntry(ctx, fullpath, entry));
 
-  insert(fullpath.parent_path().relative_path(), std::move(*blobResult));
+  insert(fullpath.parent_path().relative_path(), std::move(blobResult));
   return Result<void>();
 }
 
@@ -359,28 +351,20 @@ Result<gd::tree_t> gd::TreeCollector::apply(gd::Context &ctx) noexcept {
 
     sLogger->debug("Apply: Processing directory '/{}' ({} elements)", dir,
                    objs.size());
-    auto tree = getTreeRelativeToRoot(*ctx.repo_, ctx.tip_.root_, dir);
-    if (!tree)
-      return gd_unexpected(std::move(tree));
+    GD_TRY_ASSIGN(tree, getTreeRelativeToRoot(*ctx.repo_, ctx.tip_.root_, dir));
 
-    auto bld = getTreeBuilder(*ctx.repo_, isRootDir ? ctx.tip_.root_ : *tree);
-    if (!bld)
-      return gd_unexpected(std::move(bld));
+    GD_TRY_ASSIGN(bld, getTreeBuilder(*ctx.repo_, isRootDir ? ctx.tip_.root_ : tree));
 
     for (auto &obj : objs) {
-      if (auto res = obj.gitIt(*bld); !res)
-        return gd_unexpected(std::move(res));
+      GD_TRY(obj.gitIt(bld));
     }
 
-    if (auto parentDir = ObjectUpdate::createDir(dir, *bld); !parentDir) {
-      return gd_unexpected(std::move(parentDir));
-    } else {
-      git_oid_cpy(&treeOid, parentDir->oid());
-      hasTree = true;
+    GD_TRY_ASSIGN(parentDir, ObjectUpdate::createDir(dir, bld));
+    git_oid_cpy(&treeOid, parentDir.oid());
+    hasTree = true;
 
-      if (!isRootDir) {
-        insert(dir.parent_path(), std::move(*parentDir));
-      }
+    if (!isRootDir) {
+      insert(dir.parent_path(), std::move(parentDir));
     }
   }
 
@@ -461,19 +445,14 @@ gd::internal::Node &gd::internal::Node::operator=(Node &&other) noexcept {
 /// @param ctx the context used to access the repository
 /// @return On success a context for chaining, otherwise an Error
 Result<gd::Context> gd::internal::Node::init(gd::Context &&ctx) noexcept {
-  if (auto commit = getCommitByRef(*ctx.repo_, ctx.ref_); !commit) {
-    return gd_unexpected(std::move(commit));
-  } else {
-    ctx.tip_.commit_ = std::move(*commit);
-  }
+  GD_TRY_ASSIGN(commit, getCommitByRef(*ctx.repo_, ctx.ref_));
+  ctx.tip_.commit_ = std::move(commit);
 
   ctx.tip_.commitId_ = git_commit_id(ctx.tip_.commit_);
 
-  if (auto tree = getTreeOfCommit(*ctx.repo_, ctx.tip_.commit_); !tree) {
-    return gd_unexpected(std::move(tree));
-  } else {
-    ctx.tip_.root_ = std::move(*tree);
-  }
+  GD_TRY_ASSIGN(tree, getTreeOfCommit(*ctx.repo_, ctx.tip_.commit_));
+  ctx.tip_.root_ = std::move(tree);
+
   return std::move(ctx);
 }
 
@@ -489,17 +468,12 @@ Result<gd::Context> gd::internal::Node::init(gd::Context &&ctx) noexcept {
 Result<void> gd::internal::Node::update(const gd::Context &ctx,
                                         git_oid const *commitId) noexcept {
 
-  auto commit = getCommitById(*ctx.repo_, commitId);
-  if (!commit)
-    return gd_unexpected(std::move(commit));
+  GD_TRY_ASSIGN(commit, getCommitById(*ctx.repo_, commitId));
+  GD_TRY_ASSIGN(tree, getTreeOfCommit(*ctx.repo_, commit));
 
-  auto tree = getTreeOfCommit(*ctx.repo_, *commit);
-  if (!tree)
-    return gd_unexpected(std::move(tree));
-
-  commitId_ = git_commit_id(*commit);
-  commit_ = std::move(*commit);
-  root_ = std::move(*tree);
+  commitId_ = git_commit_id(commit);
+  commit_ = std::move(commit);
+  root_ = std::move(tree);
 
   sLogger->debug("Tip of '{}' updated to {}", ctx.ref_, *commitId);
   return Result<void>();
@@ -507,28 +481,22 @@ Result<void> gd::internal::Node::update(const gd::Context &ctx,
 
 Result<void> gd::internal::Node::rebase(const gd::Context &ctx) noexcept {
 
-  auto commitId = referenceCommit(*ctx.repo_, ctx.ref_);
-  if (!commitId)
-    return gd_unexpected(std::move(commitId));
+  GD_TRY_ASSIGN(commitId, referenceCommit(*ctx.repo_, ctx.ref_));
 
-  return update(ctx, *commitId);
+  return update(ctx, commitId);
 }
 
 Result<git_oid const *>
 gd::internal::Node::tip(const gd::Context &ctx) noexcept {
-  auto commitId = referenceCommit(*ctx.repo_, ctx.ref_);
-  if (!commitId)
-    return gd_unexpected(std::move(commitId));
+  GD_TRY_ASSIGN(commitId, referenceCommit(*ctx.repo_, ctx.ref_));
 
-  return *commitId;
+  return commitId;
 }
 
 Result<bool> gd::internal::Node::isTip(const gd::Context &ctx) noexcept {
-  auto commitId = referenceCommit(*ctx.repo_, ctx.ref_);
-  if (!commitId)
-    return gd_unexpected(std::move(commitId));
+  GD_TRY_ASSIGN(commitId, referenceCommit(*ctx.repo_, ctx.ref_));
 
-  return commitId_ != nullptr && git_oid_cmp(*commitId, commitId_) == 0;
+  return commitId_ != nullptr && git_oid_cmp(commitId, commitId_) == 0;
 }
 
 /*******************************************************************************
@@ -586,9 +554,7 @@ Result<gd::Context> gd::ni::add(gd::Context &&ctx,
   if (not ctx.repo_)
     return gd_unexpected(gd::ErrorType::MissingRepository, sNoRepositoryError);
 
-  auto res = ctx.updates_.insertFile(ctx, fullpath, content);
-  if (!res)
-    return gd_unexpected();
+  GD_TRY(ctx.updates_.insertFile(ctx, fullpath, content));
 
   sLogger->debug("Add Blob '{}'", fullpath);
   return std::move(ctx);
@@ -623,9 +589,7 @@ Result<gd::Context> gd::ni::rm(gd::Context &&ctx,
     return gd_unexpected(gd::ErrorType::NotFound,
                          "the path '" + fullpath + "' does not exist in the given tree");
 
-  auto res = ctx.updates_.removeFile(ctx, fullpath);
-  if (!res)
-    return gd_unexpected();
+  GD_TRY(ctx.updates_.removeFile(ctx, fullpath));
 
   sLogger->debug("Remove file {}", fullpath);
   return std::move(ctx);
@@ -666,12 +630,8 @@ Result<gd::Context> gd::ni::mv(gd::Context &&ctx, const std::string &fullpath,
     return gd_unexpected(gd::ErrorType::NotFound,
                          "the path '" + fullpath + "' does not exist in the given tree");
 
-  auto res = ctx.updates_.insertEntry(ctx, toFullPath, *entry);
-  if (!res)
-    return gd_unexpected();
-
-  if (auto res = ctx.updates_.removeFile(ctx, fullpath); !res)
-    return gd_unexpected();
+  GD_TRY(ctx.updates_.insertEntry(ctx, toFullPath, *entry));
+  GD_TRY(ctx.updates_.removeFile(ctx, fullpath));
 
   sLogger->debug("Move {} to {}", fullpath, toFullPath);
   return std::move(ctx);
@@ -687,13 +647,8 @@ Result<gd::Context> gd::ni::commit(gd::Context &&ctx, const std::string &author,
   if (ctx.updates_.empty())
     return gd_unexpected(gd::ErrorType::EmptyCommit, "Nothing to commit");
 
-  auto newRoot = ctx.updates_.apply(ctx);
-  if (!newRoot)
-    return gd_unexpected(std::move(newRoot));
-
-  auto commiter = getSignature(author, email);
-  if (!commiter)
-    return gd_unexpected(std::move(commiter));
+  GD_TRY_ASSIGN(newRoot, ctx.updates_.apply(ctx));
+  GD_TRY_ASSIGN(commiter, getSignature(author, email));
 
   git_commit const *parents[1]{ctx.tip_.commit_};
 
@@ -706,11 +661,11 @@ Result<gd::Context> gd::ni::commit(gd::Context &&ctx, const std::string &author,
     std::scoped_lock serialize(commitAccess);
     int result = git_commit_create(&commitId, *ctx.repo_,
                                    ctx.ref_.c_str(), /* name of ref      */
-                                   *commiter,        /* author           */
-                                   *commiter,        /* committer        */
+                                   commiter,         /* author           */
+                                   commiter,         /* committer        */
                                    "UTF-8",          /* message encoding */
                                    message.c_str(),  /* message          */
-                                   *newRoot,         /* root tree        */
+                                   newRoot,          /* root tree        */
                                    1,                /* parent count     */
                                    parents);         /* parents          */
 
@@ -718,8 +673,7 @@ Result<gd::Context> gd::ni::commit(gd::Context &&ctx, const std::string &author,
       return gd_unexpected();
   }
 
-  if (auto res = ctx.update(&commitId); !res)
-    return gd_unexpected(std::move(res));
+  GD_TRY(ctx.update(&commitId));
 
   sLogger->debug("Committed on ref {} {}({}): {}", ctx.ref_, commitId, author,
                  message);
@@ -743,13 +697,8 @@ Result<gd::Context> gd::ni::rollback(gd::Context &&ctx) noexcept {
 Result<gd::Context> gd::ni::createBranch(gd::Context &&ctx,
                                          const git_oid *commitId,
                                          const std::string &name) noexcept {
-  auto commit = getCommitById(*ctx.repo_, commitId);
-  if (!commit)
-    return gd_unexpected(std::move(commit));
-
-  auto branchRef = createBranch(*ctx.repo_, name, *commit);
-  if (!branchRef)
-    return gd_unexpected(std::move(branchRef));
+  GD_TRY_ASSIGN(commit, getCommitById(*ctx.repo_, commitId));
+  GD_TRY(createBranch(*ctx.repo_, name, commit));
 
   sLogger->debug("Branch '{}' created", name);
   return std::move(ctx);
@@ -762,9 +711,7 @@ Result<gd::Context> gd::ni::createBranch(gd::Context &&ctx,
 /// Error
 Result<gd::Context> gd::ni::createBranch(gd::Context &&ctx,
                                          const std::string &name) noexcept {
-  auto branchRef = createBranch(*ctx.repo_, name, ctx.tip_.commit_);
-  if (!branchRef)
-    return gd_unexpected(std::move(branchRef));
+  GD_TRY(createBranch(*ctx.repo_, name, ctx.tip_.commit_));
 
   sLogger->debug("Branch '{}' created", name);
   return std::move(ctx);
@@ -786,11 +733,9 @@ gd::ni::read(gd::Context &&ctx,
   if (!!contextBlob)
     return readblob(std::move(ctx), *contextBlob, fullpath);
 
-  auto blob = getBlobFromTreeByPath(ctx.tip_.root_, fullpath);
-  if (!blob)
-    return gd_unexpected(std::move(blob));
+  GD_TRY_ASSIGN(blob, getBlobFromTreeByPath(ctx.tip_.root_, fullpath));
 
-  return readblob(std::move(ctx), *blob, fullpath);
+  return readblob(std::move(ctx), blob, fullpath);
 }
 
 Result<gd::ReadContext>
