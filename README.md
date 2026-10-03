@@ -11,7 +11,7 @@
 </div>
 
 <p float="left">
-  <img src="img/logo.svg" width="150" height="150" align="left" style="margin-right: 20px;"/>
+  <img src="img/logo.png" width="150" height="150" align="left" style="margin-right: 20px;"/>
   <strong>⊕rdoba</strong> is a lightweight C++ library for managing versioned NoSQL
   documents. Like the Spanish city famous for its libraries, C⊕rdoba can store, update
   and read data, better known in the Andalusian dialect as
