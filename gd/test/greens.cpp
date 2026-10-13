@@ -21,12 +21,23 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <future>
 #include <thread>
+#include <atomic>
 #include <CLI/CLI.hpp>
 
 using namespace gd;
 using namespace std;
 
 static GlycemicIt sGit;
+
+/// @brief How an agent reacts when it detects its branch reference is stale
+enum class Strategy {
+  Drop,  ///< Discard the collected updates and retry against the new tip (default)
+  Merge, ///< Rebase the collected updates onto the new tip and commit (override)
+};
+
+/// @brief Number of commits produced by the merge strategy (contention resolved
+///        by rebasing instead of dropping)
+static std::atomic<size_t> sMerges{0};
 
 /// @brief Circular 'A'-'Z' id generator
 /// @return an Id
@@ -90,7 +101,8 @@ Result<size_t> agent(
   size_t numCommits,
   size_t numOps,
   size_t maxDirectoryDepth,
-  size_t maxFilenameLength
+  size_t maxFilenameLength,
+  Strategy strategy
   ) noexcept {
   
     char agentId = getLetterId();
@@ -120,13 +132,36 @@ Result<size_t> agent(
       if (!props.elems_.empty()) {
         {
           std::scoped_lock serialize(criticalsection);
-          if(auto isTip = ctx->isTip(); !sGit.isEmpty() && (!isTip || *isTip == false)) {
+          auto isTip = ctx->isTip();
+          bool stale = !sGit.isEmpty() && (!isTip || *isTip == false);
+
+          // Merge: instead of dropping the collected updates, rebase them onto the
+          // new tip and commit (override). Falls back to drop when the change set
+          // conflicts (a removed path was already removed by the concurrent commit).
+          bool conflicted = false;
+          bool merged = false;
+          if (stale && strategy == Strategy::Merge) {
+            // Snapshot the base (the parent's elements) before rebasing frees the
+            // old commit, then overlay our change set onto the new parent's elements.
+            GlycemicIt::Elements base;
+            if (props.parentCommitId_) base = sGit.elemsOf(props.parentCommitId_);
+            ctx->rebase(); // move the tip to the current reference
+            auto newParent = ctx->getCommitId();
+            if (sGit.rebaseElems(base, newParent, props.elems_)) {
+              props.parentCommitId_ = newParent;
+              merged = true;
+            } else {
+              conflicted = true;
+            }
+          }
+
+          if (stale && (strategy == Strategy::Drop || conflicted)) {
             ctx = std::move(ctx).and_then(rollback());
             spdlog::info("({}) ROLLBACK #{} [{} {}]", agentId, currentCommitNum, ctx->ref_, shortSha(ctx->getCommitId()) );
-            ctx->rebase();
+            if (!!ctx) ctx->rebase();
             --currentCommitNum;
             ++retries;
-          } else {
+          } else if (!!ctx) {
             ctx = std::move(ctx)
               .and_then(
                 commit(
@@ -135,7 +170,8 @@ Result<size_t> agent(
                 std::format("Commit {}:{}", agentId, currentCommitNum))
             );
             if (!!ctx) {
-              spdlog::info("({}) COMMIT #{} [{} {}] ", agentId, currentCommitNum, ctx->ref_, shortSha(ctx->getCommitId()) );
+              if (merged) ++sMerges;
+              spdlog::info("({}) COMMIT #{} [{} {}]{}", agentId, currentCommitNum, ctx->ref_, shortSha(ctx->getCommitId()), merged ? " (merged)" : "" );
               sGit.addCommit(ctx->getCommitId(), std::move(props));
             }
           }
@@ -204,7 +240,12 @@ int main(int argc, char** argv)
   app.add_option("-d,--depth", maxDirectoryDepth, "Max directory depth (Default " + std::to_string(maxDirectoryDepth) + ")");
   app.add_option("-l,--length", maxFilenameLength, "Max filename length (Default " + std::to_string(maxFilenameLength) + ")");
   app.add_flag("-n,--no-validation", noValidation, "Avoid validation against the git repository (Default " + (noValidation ? "true"s : "false"s) + ")");
+  std::string strategyName{"drop"};
+  app.add_option("-S,--strategy", strategyName, "Stale-reference strategy: 'drop' discards the collected updates and retries, 'merge' rebases them onto the new tip and commits (Default drop)")
+    ->check(CLI::IsMember({"drop", "merge"}));
   CLI11_PARSE(app, argc, argv);
+
+  Strategy strategy = (strategyName == "merge") ? Strategy::Merge : Strategy::Drop;
 
   std::filesystem::path repoPath { testbase / "greens" };
   cleanRepo(repoPath); 
@@ -216,14 +257,14 @@ int main(int argc, char** argv)
     seed = wgen::randint(0, 10000);
   wgen::reseed(seed);
 
-  spdlog::info("Starting test with random seed {}\n{:>5} agents\n{:>5} Branches\n{:>5} Commits\n{:>5} Max Ops\n{:>5} max directory depth\n{:>5} max filename", 
-    seed, numAgents, maxBranches, numCommits, numOps, maxDirectoryDepth, maxFilenameLength);
+  spdlog::info("Starting test with random seed {}\n{:>5} agents\n{:>5} Branches\n{:>5} Commits\n{:>5} Max Ops\n{:>5} max directory depth\n{:>5} max filename\n{:>5} strategy", 
+    seed, numAgents, maxBranches, numCommits, numOps, maxDirectoryDepth, maxFilenameLength, strategyName);
 
   wgen::default_syllabary s(maxDirectoryDepth, maxFilenameLength);
   std::vector<std::future<Result<size_t>>> futures;
 
   for (size_t i = 0; i < numAgents; ++i) {
-    futures.push_back(std::async(std::launch::async, agent, repoPath, s, maxBranches, numCommits, numOps, maxDirectoryDepth, maxFilenameLength ));
+    futures.push_back(std::async(std::launch::async, agent, repoPath, s, maxBranches, numCommits, numOps, maxDirectoryDepth, maxFilenameLength, strategy ));
   }
 
   bool isError{false};
@@ -239,6 +280,8 @@ int main(int argc, char** argv)
 
   size_t totalOps = numAgents * numCommits * numOps;
   std::cout << "Total retries " << retries << " " << retries * 100 / totalOps << "%" << std::endl;
+  if (strategy == Strategy::Merge)
+    std::cout << "Total merges " << sMerges.load() << " " << sMerges.load() * 100 / totalOps << "%" << std::endl;
 
   if (isError) 
     exit (-2);
