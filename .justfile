@@ -43,6 +43,10 @@ ctest:
 stress:
   ./build/release/gd/greens -g 5 -b 10 -c 30 -o 50
 
+# Run stress test with the merge (rebase + override) strategy
+stress-merge:
+  ./build/release/gd/greens -S merge -g 5 -b 10 -c 30 -o 50
+
 # Run performance benchmark
 bench:
   ./build/release/examples/speed

@@ -118,6 +118,14 @@ class GlycemicIt {
   /// If the requested index is 2, but brn1 doesn't exist, it will return brn1, however, the next time index 2 is requested
   /// brn2 is returned 
   std::pair<std::string, bool> getBranch(int branchNum) noexcept;  
+
+  /// @brief Re-bases an in-flight commit's expected elements onto a new parent
+  /// @param base The commit's elements before its own change set was applied
+  /// @param newParent The commit the change set will actually be based on (post rebase)
+  /// @param working The commit's expected elements; replaced with the rebased set on success
+  /// @return false when the change set conflicts with `newParent` (a removed path is
+  ///         already absent), true otherwise. On conflict `working` is left untouched.
+  bool rebaseElems(const Elements& base, CommitId newParent, Elements& working) const;
 };
 
 //////////////////////////////////////////
@@ -228,6 +236,52 @@ GlycemicIt::getBranch(int branchNum) noexcept {
     return std::make_pair(branches_[branches_.size() - 1], true /* New branch */);
   }
   return std::make_pair(branches_[branchNum], false /* existing branch */);
+}
+
+
+bool GlycemicIt::rebaseElems(const Elements& base, CommitId newParent, Elements& working) const {
+  std::shared_lock<std::shared_mutex> readLock(gitData_);
+
+  auto newItr = newParent ? commits_.find(newParent) : commits_.end();
+  if (!newParent || newItr == commits_.end())
+    return false; // (test bug) unknown parent, treat as conflict
+
+  auto toMap = [](const Elements& elems) {
+    std::unordered_map<std::string, std::string> map;
+    map.reserve(elems.size());
+    for (const auto& [path, content] : elems)
+      map.emplace(path.string(), content);
+    return map;
+  };
+
+  const auto baseMap = toMap(base);
+  const auto workingMap = toMap(working);
+  auto rebased = toMap(newItr->second.elems_);
+
+  // Deletions in our change set (present in base, gone from working). A deletion
+  // is only applicable if the path still exists in the new parent; otherwise the
+  // concurrent commit already removed it and applying our removal would fail.
+  for (const auto& [path, _] : baseMap) {
+    if (workingMap.contains(path))
+      continue;
+    if (!rebased.contains(path))
+      return false; // conflict, caller should roll back and retry
+    rebased.erase(path);
+  }
+
+  // Additions and updates (paths absent from base or with new content).
+  for (const auto& [path, content] : workingMap) {
+    auto itr = baseMap.find(path);
+    if (itr == baseMap.end() || itr->second != content)
+      rebased[path] = content;
+  }
+
+  working.clear();
+  working.reserve(rebased.size());
+  for (auto& [path, content] : rebased)
+    working.emplace_back(std::filesystem::path(path), std::move(content));
+
+  return true;
 }
 
 

@@ -53,7 +53,7 @@ cordoba/
 │   ├── inc/gd/             # Public headers
 │   ├── src/                # Implementation
 │   └── test/               # Unit tests (crud.cpp, greens.cpp)
-├── examples/               # Example executables (speed.cpp, example.cpp)
+├── examples/               # Example executables (timing.cpp, example.cpp)
 └── .devbox/                # Devbox configuration
 ```
 
@@ -315,9 +315,20 @@ devbox run just bench    # Run performance benchmark (speed)
 ```bash
 ./build/release/gd/crud            # Unit tests
 ./build/release/gd/greens -g 5 -b 10 -c 30 -o 50  # Stress test
+./build/release/gd/greens -S merge -g 5 -b 10 -c 30 -o 50  # Stress test (merge on contention)
 ./build/release/examples/speed     # Performance benchmark
 ./build/release/examples/example   # Example application
 ```
+
+The `greens` stress test exposes `-S/--strategy` to choose how an agent reacts
+when it detects that the branch it holds has moved (a concurrent agent committed
+first):
+
+- `drop` (default) — discard the collected updates and retry against the new
+  tip.
+- `merge` — rebase the collected updates onto the new tip and commit (override).
+  A change set that conflicts with the concurrent commit (a removed path was
+  already removed) falls back to `drop`.
 
 ### Memory Checking
 
@@ -339,7 +350,7 @@ All executables pass valgrind with **0 errors** and **0 leaks**.
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Public API (gd/)                       │
-│  ┌──────────────┐  ┌─────────────┐  ┌───────────────────┐   | 
+│  ┌──────────────┐  ┌─────────────┐  ┌───────────────────┐   |
 │  │ select       │  │ add/del/mv  │  │ commit/rollback   │   │
 │  │ Repository   │→ │ operations  │→ │ operations        │   │
 │  └──────────────┘  └─────────────┘  └───────────────────┘   │
@@ -362,13 +373,13 @@ All executables pass valgrind with **0 errors** and **0 leaks**.
 
 ### Key Components
 
-| Component | Purpose |
-|-----------|---------|
-| `Context` | Chainable context holding repository, reference, and pending updates |
-| `TreeCollector` | Batches updates per directory for efficient tree construction |
-| `Guard<T>` | RAII wrapper for all libgit2 C resources |
-| `Result<T>` / `Error` | `std::expected`-based error handling without exceptions |
-| `shorthand` | Operator overloads (`>>`, `\|\|`) for fluent chaining |
+| Component             | Purpose                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `Context`             | Chainable context holding repository, reference, and pending updates |
+| `TreeCollector`       | Batches updates per directory for efficient tree construction        |
+| `Guard<T>`            | RAII wrapper for all libgit2 C resources                             |
+| `Result<T>` / `Error` | `std::expected`-based error handling without exceptions              |
+| `shorthand`           | Operator overloads (`>>`, `\|\|`) for fluent chaining                |
 
 ---
 
@@ -618,12 +629,17 @@ the question that some may ask, and justly so, is, for what price?
 To measure that a utility was introduced i.e. 'greens' that launches `G` agents
 each of which will introduce `C` commits, each of which is composed of `A`
 number of CRUD Operations. So in essence `G x C x A` operations are happening in
-`G` concurrent contexts. The utility took some liberties to avoid complex
-merging scenarios. Merging scenarios may occur if multiple agents try to add to
-the same branch at the same time; C⊕rdoba won't allow that. Only the first agent
-wins, the others will be notified that their context is stale, leaving them the
-choice of merging, or rolling back and trying again. 2nd approach was selected
-for simplicity.
+`G` concurrent contexts. Merging scenarios occur if multiple agents try to add
+to the same branch at the same time; C⊕rdoba won't allow that. Only the first
+agent wins, the others will be notified that their context is stale, leaving
+them the choice of merging, or rolling back and trying again. Both are now
+selectable via `-S/--strategy` (default `drop`):
+
+- `drop` — roll back the collected updates and retry against the new tip. Simple
+  but wasteful: the whole commit's work is regenerated and replayed.
+- `merge` — rebase the collected updates onto the new tip and commit (override).
+  Cheaper under contention since the work is kept; a genuine conflict (a removed
+  path already removed by the concurrent commit) still falls back to `drop`.
 
 #### IMPORTANT
 
