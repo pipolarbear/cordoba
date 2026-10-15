@@ -57,8 +57,8 @@ check_c_compiler_flag(-Wno-misleading-indentation SUPPRESS_MISLEADING_INDENTATIO
 # targets are C++, so this only affects the fetched dependencies.
 add_compile_options($<$<COMPILE_LANGUAGE:C>:-w>)
 
-# Fetch libgit2 v1.9.1 (v1.5+ uses OBJECT library)
-CPMAddPackage("gh:libgit2/libgit2@1.9.1")
+# Fetch libgit2 v1.9.7 (v1.5+ uses OBJECT library)
+CPMAddPackage("gh:libgit2/libgit2@1.9.7")
 
 # Link against libgit2
 # v1.4.x uses 'git2' target
