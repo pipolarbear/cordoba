@@ -41,6 +41,8 @@ class CordobaConan(ConanFile):
         cmake_layout(self)
 
     def requirements(self):
+        # ConanCenter still lags upstream (latest recipe is 1.9.1); the CPM build
+        # (primary, used by the CMake presets and CI) fetches libgit2 v1.9.7.
         self.requires("libgit2/1.9.1")
         self.requires("spdlog/1.15.0")
 
