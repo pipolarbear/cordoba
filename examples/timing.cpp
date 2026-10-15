@@ -21,6 +21,11 @@ inline void assertError(char const * msg, const string& err)
 // Report the number of files/new revisions the DB can introduce in multiple (13) directories
 // using different commit sizes 
 //
+// The total commit time is split into the `add` phase (blob object writes) and the
+// `commit` phase (tree construction from the collected updates). This attribution is
+// what matters when reasoning about object-write performance: the add phase dominates
+// for large commits, and it is the phase a batched/packed write path would accelerate.
+//
 // Output
 //                                       Naive(1) - Per file write       Collect(deb) per dir write   Collect(rel) per dir write
 //                                      -----------------------------   ---------------------------   ---------------------------
@@ -36,16 +41,14 @@ inline void assertError(char const * msg, const string& err)
 //     std::map collects effected directorys grown is O(logN)
 //     std::vector capacity is dynmaically growing, no hint provided, growth is linear O(N)
 //     Improvement can be moving to std::unordered_map (Constant time) + sorting O(logN)
-void speedTest()
+void speedTest(const std::string& repoPath)
 {
-  std::cout << "\n\nWrite speed test" << endl;
-  constexpr size_t numFilesPerDomain(100);
+  std::cout << "\n\nWrite speed test (repo: " << repoPath << ")" << endl;
   constexpr size_t maxFileSize(1000);
 
-  const string repoPath = "/tmp/test/speedTest";
   std::filesystem::remove_all(repoPath);
 
-  //  Add 12 directories x numFilesPerDomain files in one commit
+  //  Add 12 directories x numFiles files in one commit
   //  Each domain resides in its own directory.
   //  Naieve implementation slows down exponantionally with growth of number of files !!!
   const std::vector<std::string> domains{ "AB", "AS", "UT", "AC", "RT", "TZ", "AD", "AZ", "PT", "RS", "PT", "TV", "VZ"};
@@ -53,30 +56,37 @@ void speedTest()
   auto dbx = selectRepository(repoPath);
   for (size_t numFiles = 1; numFiles <= 10'000; numFiles *= 10)
   {
-    auto start = chrono::steady_clock::now();
+    auto addStart = chrono::steady_clock::now();
 
     for (const auto& domain :  domains)
       for (const auto& [id, content] : hsh::elements(numFiles,  maxFileSize))
         dbx >> add( domain + "/" + id, content);
 
+    auto addEnd = chrono::steady_clock::now();
+
     dbx >> commit("speed", "speedo@here.com", "timing commit\n")
         || [](const auto& err) -> Result<gd::Context> { assertError("Commit failed", err); return gd_unexpected(err); };
 
-    auto end = chrono::steady_clock::now();
-    auto durationMs = chrono::duration <double, micro> (end - start).count();
-    auto durationS = chrono::duration <double> (end - start).count();
+    auto commitEnd = chrono::steady_clock::now();
+
+    auto addS    = chrono::duration<double>(addEnd - addStart).count();
+    auto commitS = chrono::duration<double>(commitEnd - addEnd).count();
+    auto durationS = addS + commitS;
 
     std::cout << "Commiting : " << right << setw(5) << numFiles  << " Files for " <<  domains.size() << " domains :: "
       << setw(12) <<  durationS << "s   "
-      << setw(10) << (numFiles / durationS) << " files/s" << endl;
+      << setw(10) << (numFiles / durationS) << " files/s"
+      << "   [ add " << setw(10) << addS << "s | commit " << setw(9) << commitS << "s ]" << endl;
 
     dbx >> selectBranch("main"); // Reset the tip to HEAD
   }
 }
 
-int main() {
+int main(int argc, char** argv) {
 
-  speedTest();
+  // Optional repository location, to compare filesystems (e.g. btrfs vs tmpfs)
+  const std::string repoPath = (argc > 1) ? argv[1] : "/tmp/test/speedTest";
+  speedTest(repoPath);
 
   return 0;
 }
