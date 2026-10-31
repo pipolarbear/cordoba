@@ -47,9 +47,17 @@ stress:
 stress-merge:
   ./build/release/gd/greens -S merge -g 5 -b 10 -c 30 -o 50
 
+# Run stress test with buffered (pack-on-commit) writes
+stress-buffered:
+  ./build/release/gd/greens --buffered -g 5 -b 10 -c 30 -o 50
+
 # Run performance benchmark
 bench:
   ./build/release/examples/speed
+
+# Run performance benchmark with buffered (pack-on-commit) writes
+bench-buffered:
+  ./build/release/examples/speed --buffered
 
 [private]
 alias b := branch

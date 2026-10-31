@@ -162,6 +162,15 @@ namespace gd
   std::shared_ptr<spdlog::logger>
   setLogger(std::shared_ptr<spdlog::logger> newLogger) noexcept;
 
+  /// @brief Enables or disables the buffered (pack-on-commit) object write path
+  /// @param enabled true to buffer new blobs/trees in memory and write them as a
+  ///        single pack on commit; false to write loose objects as before
+  /// @note Disabled by default. Opt-in performance path; see the README.
+  void setBufferedCommits(bool enabled) noexcept;
+
+  /// @brief Whether the buffered object write path is enabled
+  bool bufferedCommits() noexcept;
+
   /// @brief Removes a repository
   /// @warning Not thread-safe. Must not be called concurrently with itself or
   ///          with any other library operation. Any Context previously obtained

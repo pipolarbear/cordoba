@@ -14,6 +14,7 @@ target_sources(gd
   PRIVATE
     src/guard.cpp
     src/gd.cpp
+    src/odbBuffer.cpp
 )
 
 set_target_properties(gd

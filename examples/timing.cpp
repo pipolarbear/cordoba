@@ -84,8 +84,19 @@ void speedTest(const std::string& repoPath)
 
 int main(int argc, char** argv) {
 
-  // Optional repository location, to compare filesystems (e.g. btrfs vs tmpfs)
-  const std::string repoPath = (argc > 1) ? argv[1] : "/tmp/test/speedTest";
+  std::string repoPath = "/tmp/test/speedTest";
+
+  // Usage: speed [--buffered] [repo-path]
+  //   --buffered  enable the buffered (pack-on-commit) write path
+  //   repo-path   optional location, to compare filesystems (e.g. btrfs vs tmpfs)
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--buffered")
+      gd::setBufferedCommits(true);
+    else
+      repoPath = arg;
+  }
+
   speedTest(repoPath);
 
   return 0;
