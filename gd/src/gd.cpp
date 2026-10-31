@@ -1,8 +1,10 @@
 #include <gd/gd.h>
+#include <odbBuffer.h>
 #include <pathTraverse.h>
 #include <ranges>
 
 #include <algorithm>
+#include <atomic>
 #include <expected.h>
 #include <iostream>
 #include <mutex>
@@ -20,6 +22,9 @@ std::ostream &operator<<(std::ostream &os, const gd::Error &e) noexcept {
 /// @brief An anonymous namespace to keep some implementation details, locally
 namespace {
 static char const *const sNoRepositoryError{"No Repository selected"};
+
+/// @brief Whether new blobs/trees are buffered in memory and packed at commit
+static std::atomic<bool> sBufferedCommits{false};
 
 /**
  * Git accessor abstraction
@@ -53,19 +58,43 @@ public:
 
   ~GitAccess() {
     std::lock_guard<std::shared_mutex> lock(cacheAccess_);
+    bufferCache_.clear(); // non-owning; the ODB owns the backends
     repoCache_.clear();
     git_libgit2_shutdown();
   }
 
   /// @brief Cache a repository for the duration of the application
-  /// @param ...args path, repository pair to be kept in a hash table
+  /// @param path The repository location used as the cache key
+  /// @param repo The opened/created repository
   /// @return A pointer to repository_t, the pointer is guaranteed to be safe to
   /// use as repositories are open for the entire life time of the application.
-  template <typename... Ts> gd::repository_t *cacheRepo(Ts &&...args) {
+  gd::repository_t *cacheRepo(const std::filesystem::path &path,
+                              gd::repository_t &&repo) {
     std::lock_guard<std::shared_mutex> lock(cacheAccess_);
-    auto [itr, _] = repoCache_.emplace(std::forward<Ts>(args)...);
+    auto [itr, _] = repoCache_.emplace(path, std::move(repo));
     ctx_.setRepo(&itr->second);
+
+    // Attach the in-memory buffering backend (used only when enabled); on
+    // failure the repository simply keeps using the loose-object write path.
+    if (auto attached = attachOdbBuffer(itr->second, gd::bufferedCommits());
+        attached)
+      bufferCache_[&itr->second] = *attached;
+
     return &itr->second;
+  }
+
+  /// @brief Enables or disables the buffered write path on cached repositories
+  void setBufferingEnabled(bool enabled) noexcept {
+    std::shared_lock<std::shared_mutex> guard(cacheAccess_);
+    for (auto &[repo, buffer] : bufferCache_)
+      setOdbBufferEnabled(buffer, enabled);
+  }
+
+  /// @brief Returns the buffering backend of a cached repository, or nullptr
+  OdbBufferBackend *bufferFor(gd::repository_t *repo) noexcept {
+    std::shared_lock<std::shared_mutex> guard(cacheAccess_);
+    auto itr = bufferCache_.find(repo);
+    return itr == bufferCache_.end() ? nullptr : itr->second;
   }
 
   /// @brief Returns a pointer to cached open repository
@@ -93,6 +122,7 @@ public:
     {
       std::lock_guard<std::shared_mutex> guard(cacheAccess_);
       if (auto itr{repoCache_.find(repoFullPath)}; itr != repoCache_.end()) {
+        bufferCache_.erase(&itr->second);
         repoCache_.erase(itr);
         removed = true;
       }
@@ -123,6 +153,7 @@ public:
 private:
   std::shared_mutex cacheAccess_;
   std::unordered_map<std::filesystem::path, gd::repository_t> repoCache_;
+  std::unordered_map<gd::repository_t *, OdbBufferBackend *> bufferCache_;
   static thread_local gd::Context ctx_;
 };
 
@@ -197,9 +228,17 @@ gd::ObjectUpdate::createBlob(gd::Context &ctx,
                              const std::string &content) noexcept {
   ObjectUpdate blob{
       create(fullpath, GIT_FILEMODE_BLOB, &gd::ObjectUpdate::insert)};
-  if (git_blob_create_from_buffer(&blob.oid_, *ctx.repo_, content.c_str(),
-                                  content.size()) != 0)
-    return gd_unexpected();
+
+  // Fast path: queue the blob in the in-memory buffer, bypassing git_odb_write
+  // and its per-object freshen/refresh overhead. Falls back to the regular
+  // loose-object write when buffering is disabled or unavailable.
+  auto *buffer = sGit.bufferFor(ctx.repo_);
+  if (!buffer ||
+      !bufferBlob(buffer, content.data(), content.size(), &blob.oid_)) {
+    if (git_blob_create_from_buffer(&blob.oid_, *ctx.repo_, content.c_str(),
+                                    content.size()) != 0)
+      return gd_unexpected();
+  }
 
   sLogger->debug("Blob created {}: {}", fullpath, blob.oid_);
   return std::move(blob);
@@ -509,6 +548,13 @@ gd::setLogger(std::shared_ptr<spdlog::logger> newLogger) noexcept {
   return newLogger;
 }
 
+void gd::setBufferedCommits(bool enabled) noexcept {
+  sBufferedCommits.store(enabled);
+  sGit.setBufferingEnabled(enabled);
+}
+
+bool gd::bufferedCommits() noexcept { return sBufferedCommits.load(); }
+
 bool gd::cleanRepo(const std::filesystem::path &repoFullPath) noexcept {
   return sGit.cleanRepo(repoFullPath);
 }
@@ -659,6 +705,13 @@ Result<gd::Context> gd::ni::commit(gd::Context &&ctx, const std::string &author,
     /// The only contention point in need of serialization is updates to the
     /// DAG. i.e. commits
     std::scoped_lock serialize(commitAccess);
+
+    // Persist buffered blobs/trees as a single pack before the commit object is
+    // written. Flushing is serialized here so concurrent contexts cannot pack
+    // each other's in-flight snapshots.
+    if (auto *buffer = sGit.bufferFor(ctx.repo_); buffer)
+      GD_TRY(flushOdbBuffer(buffer, *ctx.repo_));
+
     int result = git_commit_create(&commitId, *ctx.repo_,
                                    ctx.ref_.c_str(), /* name of ref      */
                                    commiter,         /* author           */

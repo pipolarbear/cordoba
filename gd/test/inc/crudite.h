@@ -41,6 +41,8 @@ public:
   :name_{s.random_unique_filename()}, content_{s.random_content()} {}
 
   Result<Context> applyGit(Result<Context>&& ctx, GlycemicIt::Elements& elems, char agentId) const noexcept override {
+    if (!ctx)
+      return std::move(ctx);
     spdlog::info("({}) [{} {}] CREATE {} (size: {})", agentId, ctx->ref_, shortSha(ctx->getCommitId()), name_, content_.size());
     elems.emplace_back(make_pair(name_, content_));
     return std::move(ctx).and_then(add(name_, content_));
@@ -57,6 +59,8 @@ public:
   :content_{s.random_content()} {}
 
   Result<Context> applyGit(Result<Context>&& ctx, GlycemicIt::Elements& elems, char agentId) const noexcept override {
+    if (!ctx)
+      return std::move(ctx);
     if (elems.empty()) 
       return std::move(ctx);
 
@@ -79,6 +83,8 @@ public:
   Delete(const wgen::syllabary& _) noexcept {}
 
   Result<Context> applyGit(Result<Context>&& ctx, GlycemicIt::Elements& elems, char agentId) const noexcept override {
+    if (!ctx)
+      return std::move(ctx);
     if (elems.empty()) 
       return std::move(ctx);
 
@@ -101,6 +107,8 @@ public:
   Read(const wgen::syllabary& _) noexcept {}
 
   Result<Context> applyGit(Result<Context>&& ctx, GlycemicIt::Elements& elems, char agentId) const noexcept override {
+    if (!ctx)
+      return std::move(ctx);
     if (elems.empty()) 
       return std::move(ctx);
 
@@ -108,6 +116,8 @@ public:
     std::filesystem::path name  = elems[delIdx].first;
       
     auto readCtx = std::move(ctx).and_then(read(name));
+    if (!readCtx)
+      return gd_unexpected(readCtx.error());
     spdlog::info("({}) [{} {}] READ {} (size: {})", agentId, readCtx->ref_, shortSha(readCtx->getCommitId()), name, readCtx->content().size());
     return std::move(*readCtx);
   }

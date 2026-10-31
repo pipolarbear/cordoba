@@ -130,6 +130,12 @@ Result<size_t> agent(
         ctx = op->applyGit(std::move(ctx), props.elems_, agentId );
       }
       if (!props.elems_.empty()) {
+        if (!ctx) {
+          spdlog::error("({}) Operation failed before commit: {}", agentId,
+                        std::string(ctx.error()));
+          sGit.nok();
+          break;
+        }
         {
           std::scoped_lock serialize(criticalsection);
           auto isTip = ctx->isTip();
@@ -243,9 +249,13 @@ int main(int argc, char** argv)
   std::string strategyName{"drop"};
   app.add_option("-S,--strategy", strategyName, "Stale-reference strategy: 'drop' discards the collected updates and retries, 'merge' rebases them onto the new tip and commits (Default drop)")
     ->check(CLI::IsMember({"drop", "merge"}));
+  bool buffered{false};
+  app.add_flag("--buffered", buffered, "Enable the buffered (pack-on-commit) object write path (Default off)");
   CLI11_PARSE(app, argc, argv);
 
   Strategy strategy = (strategyName == "merge") ? Strategy::Merge : Strategy::Drop;
+  if (buffered)
+    gd::setBufferedCommits(true);
 
   std::filesystem::path repoPath { testbase / "greens" };
   cleanRepo(repoPath); 

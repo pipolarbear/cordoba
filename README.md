@@ -316,7 +316,9 @@ devbox run just bench    # Run performance benchmark (speed)
 ./build/release/gd/crud            # Unit tests
 ./build/release/gd/greens -g 5 -b 10 -c 30 -o 50  # Stress test
 ./build/release/gd/greens -S merge -g 5 -b 10 -c 30 -o 50  # Stress test (merge on contention)
+./build/release/gd/greens --buffered -g 5 -b 10 -c 30 -o 50  # Stress test (buffered writes)
 ./build/release/examples/speed     # Performance benchmark
+./build/release/examples/speed --buffered  # Performance benchmark (buffered writes)
 ./build/release/examples/example   # Example application
 ```
 
@@ -329,6 +331,10 @@ first):
 - `merge` — rebase the collected updates onto the new tip and commit (override).
   A change set that conflicts with the concurrent commit (a removed path was
   already removed) falls back to `drop`.
+
+`greens` also accepts `--buffered` to exercise the opt-in buffered
+(pack-on-commit) write path, and `speed --buffered` benchmarks it. Both default
+to the loose-object path.
 
 ### Memory Checking
 
@@ -618,6 +624,35 @@ And indeed the naive implementation scaled poorly with growing number of files.
 With 10,000 files per directory we still didn't reach the point of degradation
 and in fact the commit was performing better per second with growing number of
 files per directory per commit.
+
+### Buffered object writes (opt-in)
+
+By default new blobs are written as loose objects during `add`. On filesystems
+with expensive per-file metadata (btrfs, ext4, network filesystems) this
+dominates: tracing a 130k-file commit shows **~2.95M syscalls**, mostly the
+per-object `freshen`/`refresh` (`utimensat`, `readdir`) and the loose writes.
+
+`gd::setBufferedCommits(true)` (default **off**) queues new blobs and trees in
+an in-memory ODB backend and writes them as a **single pack** when the commit is
+created. Reads of uncommitted objects are served from the buffer, and commit
+semantics (fast-forward / compare-and-swap) are unchanged.
+
+Measured on the same host (btrfs), 13 dirs × 10,000 files in one commit:
+
+| Path             |  add  | commit | Total | Syscalls |
+| :--------------- | ----: | -----: | ----: | -------: |
+| loose (default)  |  8.9s |   1.1s | 10.0s |  ~2.95M  |
+| buffered         |  1.6s |   4.1s |  5.9s |   ~300   |
+
+~1.7–1.9× faster in practice (filesystem and cache dependent; the 10k commit was
+observed between ~4.9s and ~5.9s). The flush is dominated by zlib compression —
+the pack is written at `Z_BEST_SPEED`, matching loose writes. Building the flush
+with `Z_NO_COMPRESSION` cuts it to ~3.3s (~3× overall) at the cost of larger
+packs.
+
+Enable with `gd::setBufferedCommits(true)`; it is **off by default**. Uncommitted
+blobs and trees are held in RAM until the commit flush. `greens --buffered`
+exercises the concurrent path and `speed --buffered` benchmarks it.
 
 ### Concurrent performance
 
