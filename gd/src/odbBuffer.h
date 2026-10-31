@@ -15,9 +15,11 @@ struct OdbBufferBackend;
 /// @brief Attach a buffering backend to the repository's object database
 /// @param repo The repository whose ODB is extended
 /// @param enabled Initial state of the buffering path
+/// @param compressionLevel Initial zlib level used when writing the pack
 /// @return A non-owning handle on success, otherwise an Error
 Result<OdbBufferBackend *>
-attachOdbBuffer(git_repository *repo, bool enabled) noexcept;
+attachOdbBuffer(git_repository *repo, bool enabled,
+                int compressionLevel) noexcept;
 
 /// @brief Buffer a blob directly, bypassing git_odb_write (and its per-object
 ///        freshen/refresh overhead)
@@ -38,6 +40,11 @@ Result<void> flushOdbBuffer(OdbBufferBackend *backend,
 
 /// @brief Enable or disable the buffered write path for this backend
 void setOdbBufferEnabled(OdbBufferBackend *backend, bool enabled) noexcept;
+
+/// @brief Set the zlib compression level used when flushing the pack
+/// @param compressionLevel -1 (zlib default) or 0..9; 0 stores uncompressed
+void setOdbBufferLevel(OdbBufferBackend *backend,
+                       int compressionLevel) noexcept;
 
 /// @brief Number of objects currently buffered (not yet flushed)
 size_t bufferedObjectCount(OdbBufferBackend *backend) noexcept;
