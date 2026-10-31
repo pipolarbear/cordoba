@@ -251,11 +251,13 @@ int main(int argc, char** argv)
     ->check(CLI::IsMember({"drop", "merge"}));
   bool buffered{false};
   app.add_flag("--buffered", buffered, "Enable the buffered (pack-on-commit) object write path (Default off)");
+  int bufferedLevel{1};
+  app.add_option("--level", bufferedLevel, "zlib level for the buffered flush, 0=uncompressed (Default 1)");
   CLI11_PARSE(app, argc, argv);
 
   Strategy strategy = (strategyName == "merge") ? Strategy::Merge : Strategy::Drop;
   if (buffered)
-    gd::setBufferedCommits(true);
+    gd::setBufferedCommits(true, bufferedLevel);
 
   std::filesystem::path repoPath { testbase / "greens" };
   cleanRepo(repoPath); 

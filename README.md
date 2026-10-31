@@ -646,13 +646,14 @@ Measured on the same host (btrfs), 13 dirs × 10,000 files in one commit:
 
 ~1.7–1.9× faster in practice (filesystem and cache dependent; the 10k commit was
 observed between ~4.9s and ~5.9s). The flush is dominated by zlib compression —
-the pack is written at `Z_BEST_SPEED`, matching loose writes. Building the flush
-with `Z_NO_COMPRESSION` cuts it to ~3.3s (~3× overall) at the cost of larger
-packs.
+the pack is written at zlib level 1 by default, matching loose writes. Passing
+level 0 (`setBufferedCommits(true, 0)`) stores uncompressed and cuts it to ~3.3s
+(~3× overall) at the cost of larger packs.
 
 Enable with `gd::setBufferedCommits(true)`; it is **off by default**. Uncommitted
 blobs and trees are held in RAM until the commit flush. `greens --buffered`
-exercises the concurrent path and `speed --buffered` benchmarks it.
+exercises the concurrent path and `speed --buffered` benchmarks it; both accept
+`--level N` (0 = uncompressed).
 
 ### Concurrent performance
 

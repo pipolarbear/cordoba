@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <ios>
+#include <string>
 
 #include <openssl/sha.h>
 #include "generator.h"
@@ -85,17 +86,25 @@ void speedTest(const std::string& repoPath)
 int main(int argc, char** argv) {
 
   std::string repoPath = "/tmp/test/speedTest";
+  bool buffered = false;
+  int level = 1;
 
-  // Usage: speed [--buffered] [repo-path]
+  // Usage: speed [--buffered] [--level N] [repo-path]
   //   --buffered  enable the buffered (pack-on-commit) write path
+  //   --level N   zlib level for the buffered flush (0 = uncompressed, default 1)
   //   repo-path   optional location, to compare filesystems (e.g. btrfs vs tmpfs)
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--buffered")
-      gd::setBufferedCommits(true);
+      buffered = true;
+    else if (arg == "--level" && i + 1 < argc)
+      level = std::stoi(argv[++i]);
     else
       repoPath = arg;
   }
+
+  if (buffered)
+    gd::setBufferedCommits(true, level);
 
   speedTest(repoPath);
 

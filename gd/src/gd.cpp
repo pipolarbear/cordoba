@@ -26,6 +26,9 @@ static char const *const sNoRepositoryError{"No Repository selected"};
 /// @brief Whether new blobs/trees are buffered in memory and packed at commit
 static std::atomic<bool> sBufferedCommits{false};
 
+/// @brief zlib level used when writing the buffered pack (-1, 0..9)
+static std::atomic<int> sBufferedCompression{1};
+
 /**
  * Git accessor abstraction
  * - Initializes git2 library on startup, and release it on shutdown
@@ -76,7 +79,9 @@ public:
 
     // Attach the in-memory buffering backend (used only when enabled); on
     // failure the repository simply keeps using the loose-object write path.
-    if (auto attached = attachOdbBuffer(itr->second, gd::bufferedCommits());
+    if (auto attached =
+            attachOdbBuffer(itr->second, gd::bufferedCommits(),
+                            gd::bufferedCommitCompression());
         attached)
       bufferCache_[&itr->second] = *attached;
 
@@ -88,6 +93,13 @@ public:
     std::shared_lock<std::shared_mutex> guard(cacheAccess_);
     for (auto &[repo, buffer] : bufferCache_)
       setOdbBufferEnabled(buffer, enabled);
+  }
+
+  /// @brief Sets the pack compression level on cached repositories
+  void setBufferingLevel(int compressionLevel) noexcept {
+    std::shared_lock<std::shared_mutex> guard(cacheAccess_);
+    for (auto &[repo, buffer] : bufferCache_)
+      setOdbBufferLevel(buffer, compressionLevel);
   }
 
   /// @brief Returns the buffering backend of a cached repository, or nullptr
@@ -548,12 +560,21 @@ gd::setLogger(std::shared_ptr<spdlog::logger> newLogger) noexcept {
   return newLogger;
 }
 
-void gd::setBufferedCommits(bool enabled) noexcept {
+void gd::setBufferedCommits(bool enabled, int compressionLevel) noexcept {
+  // Clamp to what zlib's deflateInit accepts.
+  compressionLevel =
+      compressionLevel < -1 ? -1 : (compressionLevel > 9 ? 9 : compressionLevel);
+  sBufferedCompression.store(compressionLevel);
   sBufferedCommits.store(enabled);
   sGit.setBufferingEnabled(enabled);
+  sGit.setBufferingLevel(compressionLevel);
 }
 
 bool gd::bufferedCommits() noexcept { return sBufferedCommits.load(); }
+
+int gd::bufferedCommitCompression() noexcept {
+  return sBufferedCompression.load();
+}
 
 bool gd::cleanRepo(const std::filesystem::path &repoFullPath) noexcept {
   return sGit.cleanRepo(repoFullPath);

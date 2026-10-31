@@ -165,11 +165,16 @@ namespace gd
   /// @brief Enables or disables the buffered (pack-on-commit) object write path
   /// @param enabled true to buffer new blobs/trees in memory and write them as a
   ///        single pack on commit; false to write loose objects as before
+  /// @param compressionLevel zlib level used when writing the pack: -1 (zlib
+  ///        default), 0 (uncompressed, fastest) through 9 (smallest). Default 1.
   /// @note Disabled by default. Opt-in performance path; see the README.
-  void setBufferedCommits(bool enabled) noexcept;
+  void setBufferedCommits(bool enabled, int compressionLevel = 1) noexcept;
 
   /// @brief Whether the buffered object write path is enabled
   bool bufferedCommits() noexcept;
+
+  /// @brief zlib compression level used by the buffered write path
+  int bufferedCommitCompression() noexcept;
 
   /// @brief Removes a repository
   /// @warning Not thread-safe. Must not be called concurrently with itself or

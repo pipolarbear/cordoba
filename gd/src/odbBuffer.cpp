@@ -42,6 +42,11 @@ struct BufferedObject {
 using BufferedMap =
     std::unordered_map<git_oid, BufferedObject, OidHash, OidEqual>;
 
+/// @brief Clamp a zlib compression level to the range deflateInit accepts
+constexpr int clampLevel(int level) noexcept {
+  return level < -1 ? -1 : (level > 9 ? 9 : level);
+}
+
 /// @brief Append a big-endian 32-bit integer (pack header fields)
 void appendBe32(std::string &out, std::uint32_t value) {
   out.push_back(static_cast<char>((value >> 24) & 0xFF));
@@ -68,7 +73,7 @@ void appendObjectHeader(std::string &out, git_object_t type, std::size_t size) {
 ///        deflateInit/deflateEnd, which dominates flushes of many small objects.
 class Deflater {
 public:
-  Deflater() = default;
+  explicit Deflater(int level) : level_(level) {}
   Deflater(const Deflater &) = delete;
   Deflater &operator=(const Deflater &) = delete;
   ~Deflater() {
@@ -78,7 +83,7 @@ public:
 
   bool compress(const std::string &in, std::string &out) {
     if (!initialized_) {
-      if (deflateInit(&stream_, Z_BEST_SPEED) != Z_OK)
+      if (deflateInit(&stream_, level_) != Z_OK)
         return false;
       initialized_ = true;
     } else if (deflateReset(&stream_) != Z_OK) {
@@ -99,6 +104,7 @@ public:
 
 private:
   z_stream stream_{};
+  int level_;
   bool initialized_{false};
 };
 } // namespace
@@ -109,6 +115,7 @@ struct OdbBufferBackend {
   BufferedMap active;
   BufferedMap flushing;
   std::atomic<bool> enabled{false};
+  std::atomic<int> level{1}; // zlib level for the flush
 };
 
 namespace {
@@ -197,8 +204,8 @@ int implWritestream(git_odb_stream **, git_odb_backend *, git_object_size_t,
 void implFree(git_odb_backend *backend) { delete self(backend); }
 } // namespace
 
-Result<OdbBufferBackend *> attachOdbBuffer(git_repository *repo,
-                                           bool enabled) noexcept {
+Result<OdbBufferBackend *> attachOdbBuffer(git_repository *repo, bool enabled,
+                                           int compressionLevel) noexcept {
   if (!repo)
     return gd_unexpected(gd::ErrorType::MissingRepository,
                          "No repository to buffer");
@@ -221,6 +228,7 @@ Result<OdbBufferBackend *> attachOdbBuffer(git_repository *repo,
   buffer->parent.exists = &implExists;
   buffer->parent.free = &implFree;
   buffer->enabled.store(enabled);
+  buffer->level.store(clampLevel(compressionLevel));
 
   // Highest priority: writes are offered here first, and fall through to the
   // loose backend when not buffered.
@@ -326,7 +334,7 @@ Result<void> flushOdbBuffer(OdbBufferBackend *backend,
     return rc;
   };
 
-  Deflater deflater;
+  Deflater deflater(backend->level.load(std::memory_order_relaxed));
   std::string compressed;
   for (const auto &oid : oids) {
     if (error != 0)
@@ -393,6 +401,12 @@ Result<void> flushOdbBuffer(OdbBufferBackend *backend,
 void setOdbBufferEnabled(OdbBufferBackend *backend, bool enabled) noexcept {
   if (backend)
     backend->enabled.store(enabled);
+}
+
+void setOdbBufferLevel(OdbBufferBackend *backend,
+                       int compressionLevel) noexcept {
+  if (backend)
+    backend->level.store(clampLevel(compressionLevel));
 }
 
 size_t bufferedObjectCount(OdbBufferBackend *backend) noexcept {
